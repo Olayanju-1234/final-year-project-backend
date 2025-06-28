@@ -282,6 +282,49 @@ export class PropertyController {
         return;
       }
 
+      // --- IMAGE HANDLING LOGIC ---
+      // Parse imagesToKeep and imagesToDelete from body
+      let imagesToKeep: string[] = [];
+      if (Array.isArray(req.body.imagesToKeep)) {
+        imagesToKeep = req.body.imagesToKeep;
+      } else if (req.body.imagesToKeep) {
+        imagesToKeep = [req.body.imagesToKeep];
+      }
+      let imagesToDelete: string[] = [];
+      if (Array.isArray(req.body.imagesToDelete)) {
+        imagesToDelete = req.body.imagesToDelete;
+      } else if (req.body.imagesToDelete) {
+        imagesToDelete = [req.body.imagesToDelete];
+      }
+      // Remove imagesToDelete from imagesToKeep (defensive)
+      imagesToKeep = imagesToKeep.filter(url => !imagesToDelete.includes(url));
+
+      // Upload new images if any
+      let newImageUrls: string[] = [];
+      if (req.files && Array.isArray(req.files)) {
+        try {
+          const uploadPromises = (req.files as Express.Multer.File[]).map(file => uploadToCloudinary(file));
+          const uploadResults = await Promise.all(uploadPromises);
+          newImageUrls = uploadResults;
+        } catch (uploadError) {
+          logger.error("Failed to upload images", uploadError);
+          res.status(500).json({
+            success: false,
+            message: "Failed to upload images",
+            error: uploadError instanceof Error ? uploadError.message : "Unknown error",
+          } as ApiResponse);
+          return;
+        }
+      }
+
+      // Merge all images
+      const finalImages = [...imagesToKeep, ...newImageUrls];
+      updateData.images = finalImages;
+
+      // Remove imagesToKeep/imagesToDelete from updateData to avoid schema issues
+      delete updateData.imagesToKeep;
+      delete updateData.imagesToDelete;
+
       const updatedProperty = await Property.findByIdAndUpdate(id, updateData, {
         new: true,
         runValidators: true,

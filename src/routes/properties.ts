@@ -129,6 +129,8 @@ router.put(
   auth,
   authorize("landlord"),
   param("id").isMongoId().withMessage("Invalid property ID"),
+  uploadMultiple as any,
+  handleUploadError,
   propertyValidation,
   propertyController.updateProperty,
 )
