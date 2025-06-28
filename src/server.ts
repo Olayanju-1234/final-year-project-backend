@@ -1,9 +1,9 @@
+import 'dotenv/config';
 import express from "express";
 import cors from "cors";
 import helmet from "helmet";
 import compression from "compression";
 import morgan from "morgan";
-import dotenv from "dotenv";
 import { database } from "@/config/database";
 import { logger } from "@/utils/logger";
 import { rateLimiter } from "@/middleware/rateLimiter";
@@ -12,9 +12,6 @@ import { rateLimiter } from "@/middleware/rateLimiter";
 import { authRoutes } from "@/routes/auth";
 import { propertyRoutes } from "@/routes/properties";
 import { optimizationRoutes } from "@/routes/optimization";
-
-// Load environment variables
-dotenv.config();
 
 class Server {
   private app: express.Application;
@@ -42,7 +39,7 @@ class Server {
             : ["http://localhost:3000", "http://localhost:3001"],
         credentials: true,
         methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-        allowedHeaders: ["Content-Type", "Authorization"],
+        allowedHeaders: ["Content-Type", "Authorization", "Cache-Control", "Pragma"],
       })
     );
 

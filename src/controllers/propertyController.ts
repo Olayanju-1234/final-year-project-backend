@@ -136,6 +136,7 @@ export class PropertyController {
    * POST /api/properties
    */
   public async createProperty(req: Request, res: Response): Promise<void> {
+    console.log('DEBUG: req.files =', req.files)
     try {
       console.log("Received request body:", req.body) // Debug log
       console.log("Received files:", req.files) // Debug log
