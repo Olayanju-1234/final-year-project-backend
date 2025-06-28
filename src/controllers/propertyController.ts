@@ -4,6 +4,7 @@ import { Property } from "@/models/Property";
 import { User } from "@/models/User";
 import type { ApiResponse, PropertyCreateRequest } from "@/types";
 import { logger } from "@/utils/logger";
+import { uploadToCloudinary } from "@/config/cloudinary";
 
 export class PropertyController {
   /**
@@ -131,13 +132,17 @@ export class PropertyController {
   }
 
   /**
-   * Create new property
+   * Create new property with images
    * POST /api/properties
    */
   public async createProperty(req: Request, res: Response): Promise<void> {
     try {
+      console.log("Received request body:", req.body) // Debug log
+      console.log("Received files:", req.files) // Debug log
+      
       const errors = validationResult(req);
       if (!errors.isEmpty()) {
+        console.log("Validation errors:", errors.array()) // Debug log
         res.status(400).json({
           success: false,
           message: "Validation failed",
@@ -145,8 +150,6 @@ export class PropertyController {
         } as ApiResponse);
         return;
       }
-
-      const propertyData: PropertyCreateRequest = req.body;
 
       // Verify user is a landlord
       const user = await User.findById(req.user!.id);
@@ -158,9 +161,60 @@ export class PropertyController {
         return;
       }
 
+      // Parse form data
+      const propertyData = {
+        title: req.body.title,
+        description: req.body.description,
+        location: {
+          address: req.body.location?.address || req.body['location.address'],
+          city: req.body.location?.city || req.body['location.city'],
+          state: req.body.location?.state || req.body['location.state'],
+        },
+        rent: Number(req.body.rent),
+        bedrooms: Number(req.body.bedrooms),
+        bathrooms: Number(req.body.bathrooms),
+        size: req.body.size ? Number(req.body.size) : undefined,
+        // Handle amenities array from form data
+        amenities: Array.isArray(req.body.amenities) ? req.body.amenities : 
+                  (req.body.amenities ? [req.body.amenities] : []),
+        features: {
+          furnished: req.body.features?.furnished === 'true' || req.body['features.furnished'] === 'true' || false,
+          petFriendly: req.body.features?.petFriendly === 'true' || req.body['features.petFriendly'] === 'true' || false,
+          parking: req.body.features?.parking === 'true' || req.body['features.parking'] === 'true' || false,
+          balcony: req.body.features?.balcony === 'true' || req.body['features.balcony'] === 'true' || false,
+        },
+        utilities: {
+          electricity: req.body.utilities?.electricity === 'true' || req.body['utilities.electricity'] === 'true' || true,
+          water: req.body.utilities?.water === 'true' || req.body['utilities.water'] === 'true' || true,
+          internet: req.body.utilities?.internet === 'true' || req.body['utilities.internet'] === 'true' || false,
+          gas: req.body.utilities?.gas === 'true' || req.body['utilities.gas'] === 'true' || false,
+        },
+      };
+
+      // Handle image uploads if any
+      let imageUrls: string[] = [];
+      if (req.files && Array.isArray(req.files)) {
+        try {
+          const uploadPromises = (req.files as Express.Multer.File[]).map(file => 
+            uploadToCloudinary(file)
+          );
+          const uploadResults = await Promise.all(uploadPromises);
+          imageUrls = uploadResults;
+        } catch (uploadError) {
+          logger.error("Failed to upload images", uploadError);
+          res.status(500).json({
+            success: false,
+            message: "Failed to upload images",
+            error: uploadError instanceof Error ? uploadError.message : "Unknown error",
+          } as ApiResponse);
+          return;
+        }
+      }
+
       const property = new Property({
         ...propertyData,
         landlordId: req.user!.id,
+        images: imageUrls,
       });
 
       await property.save();
@@ -169,6 +223,7 @@ export class PropertyController {
         propertyId: property._id,
         landlordId: req.user!.id,
         title: property.title,
+        imageCount: imageUrls.length,
       });
 
       res.status(201).json({
@@ -341,6 +396,70 @@ export class PropertyController {
       res.status(500).json({
         success: false,
         message: "Failed to retrieve landlord properties",
+        error: error instanceof Error ? error.message : "Unknown error",
+      } as ApiResponse);
+    }
+  }
+
+  /**
+   * Delete an image from a property
+   * DELETE /api/properties/:id/images/:imageIndex
+   */
+  public async deleteImage(req: Request, res: Response): Promise<void> {
+    try {
+      const { id, imageIndex } = req.params;
+      const index = parseInt(imageIndex);
+
+      // Find property and verify ownership
+      const property = await Property.findById(id);
+      if (!property) {
+        res.status(404).json({
+          success: false,
+          message: "Property not found",
+        } as ApiResponse);
+        return;
+      }
+
+      if (property.landlordId.toString() !== req.user!.id) {
+        res.status(403).json({
+          success: false,
+          message: "Not authorized to delete images from this property",
+        } as ApiResponse);
+        return;
+      }
+
+      if (index < 0 || index >= property.images.length) {
+        res.status(400).json({
+          success: false,
+          message: "Invalid image index",
+        } as ApiResponse);
+        return;
+      }
+
+      // Remove image from array
+      const deletedImage = property.images.splice(index, 1)[0];
+      await property.save();
+
+      logger.info("Image deleted successfully", {
+        propertyId: id,
+        landlordId: req.user!.id,
+        imageUrl: deletedImage,
+      });
+
+      res.status(200).json({
+        success: true,
+        message: "Image deleted successfully",
+        data: {
+          propertyId: id,
+          deletedImage,
+          remainingImages: property.images.length,
+        },
+      } as ApiResponse);
+    } catch (error) {
+      logger.error("Failed to delete image", error);
+      res.status(500).json({
+        success: false,
+        message: "Failed to delete image",
         error: error instanceof Error ? error.message : "Unknown error",
       } as ApiResponse);
     }
