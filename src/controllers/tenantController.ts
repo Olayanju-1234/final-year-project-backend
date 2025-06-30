@@ -111,23 +111,22 @@ export class TenantController {
       }
 
       const { id } = req.params;
-      const preferences = req.body;
+      const preferences = req.body.preferences || req.body;
 
-      // Defensive: ensure preferredLocation is never empty
-      if (!preferences.preferredLocation || preferences.preferredLocation.trim() === "") {
-        preferences.preferredLocation = "Ikeja"
-      }
-
-      // Ensure all required fields are present
-      if (!preferences.budget) preferences.budget = { min: 0, max: 1000000 }
-      if (!preferences.requiredAmenities) preferences.requiredAmenities = []
-      if (!preferences.preferredBedrooms) preferences.preferredBedrooms = 1
-      if (!preferences.preferredBathrooms) preferences.preferredBathrooms = 1
-      if (!preferences.maxCommute) preferences.maxCommute = 30
+      // Defensive: ensure all fields are present
+      const update: any = {};
+      if (preferences.budget) update["preferences.budget"] = preferences.budget;
+      if (preferences.preferredLocation) update["preferences.preferredLocation"] = preferences.preferredLocation;
+      if (preferences.requiredAmenities) update["preferences.requiredAmenities"] = preferences.requiredAmenities;
+      if (preferences.preferredBedrooms) update["preferences.preferredBedrooms"] = preferences.preferredBedrooms;
+      if (preferences.preferredBathrooms) update["preferences.preferredBathrooms"] = preferences.preferredBathrooms;
+      if (preferences.maxCommute) update["preferences.maxCommute"] = preferences.maxCommute;
+      if (preferences.features) update["preferences.features"] = preferences.features;
+      if (preferences.utilities) update["preferences.utilities"] = preferences.utilities;
 
       const tenant = await Tenant.findByIdAndUpdate(
         id,
-        { preferences },
+        update,
         { new: true, runValidators: true }
       ).populate("userId", "name email phone");
 

@@ -50,6 +50,18 @@ const tenantSchema = new Schema<ITenant>(
         min: [5, "Minimum commute time is 5 minutes"],
         max: [180, "Maximum commute time is 180 minutes"],
       },
+      features: {
+        furnished: { type: Boolean, default: false },
+        petFriendly: { type: Boolean, default: false },
+        parking: { type: Boolean, default: false },
+        balcony: { type: Boolean, default: false },
+      },
+      utilities: {
+        electricity: { type: Boolean, default: false },
+        water: { type: Boolean, default: false },
+        internet: { type: Boolean, default: false },
+        gas: { type: Boolean, default: false },
+      },
     },
     searchHistory: [
       {
