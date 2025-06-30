@@ -101,6 +101,8 @@ export class OptimizationController {
         bedrooms: tenant.preferences.preferredBedrooms,
         bathrooms: tenant.preferences.preferredBathrooms,
         maxCommute: tenant.preferences.maxCommute,
+        features: tenant.preferences.features,
+        utilities: tenant.preferences.utilities,
       };
 
       // Run optimization
@@ -126,6 +128,58 @@ export class OptimizationController {
       res.status(500).json({
         success: false,
         message: "Failed to retrieve matches",
+        error: error instanceof Error ? error.message : "Unknown error",
+      } as ApiResponse);
+    }
+  }
+
+  /**
+   * Get optimized tenant matches for a specific landlord's properties
+   * GET /api/optimization/landlord-matches/:landlordId
+   */
+  public async getMatchesForLandlord(req: Request, res: Response): Promise<void> {
+    try {
+      const { landlordId } = req.params;
+      const { maxResults = 5 } = req.query;
+
+      // 1. Find all properties for this landlord
+      const properties = await Property.find({ landlordId: landlordId, status: "available" });
+
+      if (!properties || properties.length === 0) {
+        res.status(404).json({
+          success: true,
+          message: "No available properties found for this landlord.",
+          data: [],
+        } as ApiResponse);
+        return;
+      }
+
+      // 2. For each property, find the best tenant matches
+      const allMatches = [];
+      for (const property of properties) {
+        const result = await linearProgrammingService.optimizeTenantMatching(property, Number(maxResults));
+        if (result.matches.length > 0) {
+          allMatches.push({
+            property: {
+              _id: property._id,
+              title: property.title,
+              location: property.location,
+            },
+            matches: result.matches,
+          });
+        }
+      }
+
+      res.status(200).json({
+        success: true,
+        message: "Tenant matches retrieved successfully",
+        data: allMatches,
+      } as ApiResponse);
+    } catch (error) {
+      logger.error("Failed to get matches for landlord", error);
+      res.status(500).json({
+        success: false,
+        message: "Failed to retrieve tenant matches",
         error: error instanceof Error ? error.message : "Unknown error",
       } as ApiResponse);
     }

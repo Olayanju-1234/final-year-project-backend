@@ -72,6 +72,18 @@ router.get(
 )
 
 /**
+ * @route   GET /api/optimization/landlord-matches/:landlordId
+ * @desc    Get optimized matches for a landlord
+ * @access  Private
+ */
+router.get(
+  "/landlord-matches/:landlordId",
+  auth,
+  param("landlordId").isMongoId().withMessage("Invalid landlord ID"),
+  optimizationController.getMatchesForLandlord,
+)
+
+/**
  * @route   GET /api/optimization/stats
  * @desc    Get optimization statistics
  * @access  Private

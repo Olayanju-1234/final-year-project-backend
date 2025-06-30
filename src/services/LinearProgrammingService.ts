@@ -7,6 +7,7 @@ import type {
   PropertyMatch,
 } from "@/types";
 import { logger } from "@/utils/logger";
+import { Tenant } from "@/models/Tenant";
 
 /**
  * Linear Programming Optimization Service
@@ -24,21 +25,23 @@ export class LinearProgrammingService {
 
   // Default optimization weights
   private readonly defaultWeights: OptimizationWeights = {
-    budget: Number.parseFloat(process.env.LP_DEFAULT_WEIGHTS_BUDGET || "0.3"),
+    budget: Number.parseFloat(process.env.LP_DEFAULT_WEIGHTS_BUDGET || "0.25"),
     location: Number.parseFloat(
-      process.env.LP_DEFAULT_WEIGHTS_LOCATION || "0.25"
+      process.env.LP_DEFAULT_WEIGHTS_LOCATION || "0.2"
     ),
     amenities: Number.parseFloat(
-      process.env.LP_DEFAULT_WEIGHTS_AMENITIES || "0.25"
+      process.env.LP_DEFAULT_WEIGHTS_AMENITIES || "0.15"
     ),
-    size: Number.parseFloat(process.env.LP_DEFAULT_WEIGHTS_SIZE || "0.2"),
+    size: Number.parseFloat(process.env.LP_DEFAULT_WEIGHTS_SIZE || "0.15"),
+    features: Number.parseFloat(process.env.LP_DEFAULT_WEIGHTS_FEATURES || "0.15"),
+    utilities: Number.parseFloat(process.env.LP_DEFAULT_WEIGHTS_UTILITIES || "0.1"),
   };
 
   private readonly maxExecutionTime = Number.parseInt(
     process.env.LP_MAX_EXECUTION_TIME || "30000"
   );
   private readonly minMatchThreshold = Number.parseInt(
-    process.env.MIN_MATCH_SCORE_THRESHOLD || "60"
+    process.env.MIN_MATCH_SCORE_THRESHOLD || "30"
   );
 
   public static getInstance(): LinearProgrammingService {
@@ -132,6 +135,59 @@ export class LinearProgrammingService {
   }
 
   /**
+   * Find best tenant matches for a given property
+   */
+  public async optimizeTenantMatching(
+    property: any,
+    maxResults = 5
+  ): Promise<any> {
+    const startTime = Date.now();
+    const tenants = await Tenant.find({ 'preferences.budget': { $exists: true } }).populate('userId', 'name').lean();
+
+    if (tenants.length === 0) {
+      return { matches: [], optimizationDetails: { executionTime: Date.now() - startTime, matchesFound: 0 } };
+    }
+
+    const tenantScores = tenants.map(tenant => {
+      const constraints: OptimizationConstraints = {
+        budget: tenant.preferences.budget,
+        location: tenant.preferences.preferredLocation,
+        amenities: tenant.preferences.requiredAmenities,
+        bedrooms: tenant.preferences.preferredBedrooms,
+        bathrooms: tenant.preferences.preferredBathrooms,
+        features: tenant.preferences.features,
+        utilities: tenant.preferences.utilities,
+      };
+      
+      const score = this.calculateSatisfactionScore(property, constraints, this.defaultWeights);
+      
+      return {
+        tenant: {
+          _id: tenant._id,
+          name: (tenant.userId as any)?.name || 'N/A',
+        },
+        matchScore: Math.round(score),
+        preferencesSummary: `Budget: ₦${tenant.preferences.budget.min}-₦${tenant.preferences.budget.max}, Location: ${tenant.preferences.preferredLocation}`,
+      };
+    });
+
+    const matches = tenantScores
+      .filter(match => match.matchScore >= this.minMatchThreshold)
+      .sort((a, b) => b.matchScore - a.matchScore)
+      .slice(0, maxResults);
+
+    return {
+      matches,
+      optimizationDetails: {
+        algorithm: "reverse_match",
+        executionTime: Date.now() - startTime,
+        matchesFound: matches.length,
+        totalTenantsEvaluated: tenants.length,
+      },
+    };
+  }
+
+  /**
    * Fetch properties that meet hard constraints
    */
   private async fetchEligibleProperties(
@@ -159,6 +215,9 @@ export class LinearProgrammingService {
     if (constraints.amenities && constraints.amenities.length > 0) {
       query.amenities = { $in: constraints.amenities };
     }
+
+    // Note: Features and utilities are now handled as soft constraints in the scoring phase
+    // rather than hard filters here
 
     const maxProperties = Number.parseInt(
       process.env.MAX_PROPERTIES_PER_OPTIMIZATION || "100"
@@ -235,12 +294,26 @@ export class LinearProgrammingService {
     // Size score (if size preference exists)
     const sizeScore = this.calculateSizeScore(property, constraints);
 
+    // Features score
+    const featureScore = this.calculateFeatureScore(
+      property.features,
+      constraints.features
+    );
+
+    // Utilities score
+    const utilityScore = this.calculateUtilityScore(
+      property.utilities,
+      constraints.utilities
+    );
+
     // Weighted combination
     const totalScore =
       weights.budget * budgetScore +
       weights.location * locationScore +
       weights.amenities * amenityScore +
-      weights.size * sizeScore;
+      weights.size * sizeScore +
+      weights.features * featureScore +
+      weights.utilities * utilityScore;
 
     return Math.min(100, Math.max(0, totalScore));
   }
@@ -341,6 +414,54 @@ export class LinearProgrammingService {
   }
 
   /**
+   * Calculate feature satisfaction score
+   */
+  private calculateFeatureScore(
+    propertyFeatures: any,
+    requiredFeatures?: { [key: string]: boolean }
+  ): number {
+    if (!requiredFeatures || !propertyFeatures) return 100; // No preferences = perfect score
+
+    let matchCount = 0;
+    let totalRequired = 0;
+
+    Object.entries(requiredFeatures).forEach(([feature, required]) => {
+      if (required) {
+        totalRequired++;
+        if (propertyFeatures[feature]) {
+          matchCount++;
+        }
+      }
+    });
+
+    return totalRequired === 0 ? 100 : (matchCount / totalRequired) * 100;
+  }
+
+  /**
+   * Calculate utilities satisfaction score
+   */
+  private calculateUtilityScore(
+    propertyUtilities: any,
+    requiredUtilities?: { [key: string]: boolean }
+  ): number {
+    if (!requiredUtilities || !propertyUtilities) return 100; // No preferences = perfect score
+
+    let matchCount = 0;
+    let totalRequired = 0;
+
+    Object.entries(requiredUtilities).forEach(([utility, required]) => {
+      if (required) {
+        totalRequired++;
+        if (propertyUtilities[utility]) {
+          matchCount++;
+        }
+      }
+    });
+
+    return totalRequired === 0 ? 100 : (matchCount / totalRequired) * 100;
+  }
+
+  /**
    * Build constraint matrix for LP problem
    */
   private buildConstraintMatrix(
@@ -348,7 +469,7 @@ export class LinearProgrammingService {
     constraints: OptimizationConstraints
   ): Matrix {
     const numProperties = properties.length;
-    const numConstraints = 4; // budget, location, amenities, size
+    const numConstraints = 6; // budget, location, amenities, size, features, utilities
 
     const matrix = new Array(numConstraints);
     for (let i = 0; i < numConstraints; i++) {
@@ -368,20 +489,34 @@ export class LinearProgrammingService {
       // Location constraint (1 if matches, 0 otherwise)
       matrix[1][j] =
         this.calculateLocationScore(property.location, constraints.location) >
-        50
+        30
           ? 1
           : 0;
 
       // Amenities constraint (1 if has required amenities, 0 otherwise)
       matrix[2][j] =
         this.calculateAmenityScore(property.amenities, constraints.amenities) >
-        70
+        50
           ? 1
           : 0;
 
       // Size constraint (1 if reasonable size, 0 otherwise)
       matrix[3][j] =
-        this.calculateSizeScore(property, constraints) > 50 ? 1 : 0;
+        this.calculateSizeScore(property, constraints) > 30 ? 1 : 0;
+
+      // Features constraint (1 if matches some features, 0 otherwise)
+      matrix[4][j] =
+        this.calculateFeatureScore(property.features, constraints.features) >
+        30
+          ? 1
+          : 0;
+
+      // Utilities constraint (1 if matches some utilities, 0 otherwise)
+      matrix[5][j] =
+        this.calculateUtilityScore(property.utilities, constraints.utilities) >
+        30
+          ? 1
+          : 0;
     }
 
     return new Matrix(matrix);
@@ -439,14 +574,16 @@ export class LinearProgrammingService {
     propertyIndex: number
   ): boolean {
     const numConstraints = constraintMatrix.rows;
+    let satisfiedCount = 0;
 
     for (let i = 0; i < numConstraints; i++) {
-      if (constraintMatrix.get(i, propertyIndex) === 0) {
-        return false; // Constraint not satisfied
+      if (constraintMatrix.get(i, propertyIndex) === 1) {
+        satisfiedCount++;
       }
     }
 
-    return true;
+    // Property is feasible if it satisfies at least 4 out of 6 constraints
+    return satisfiedCount >= 4;
   }
 
   /**
@@ -496,6 +633,18 @@ export class LinearProgrammingService {
               sizeScore: Math.round(
                 this.calculateSizeScore(property, constraints)
               ),
+              featureScore: Math.round(
+                this.calculateFeatureScore(
+                  property.features,
+                  constraints.features
+                )
+              ),
+              utilityScore: Math.round(
+                this.calculateUtilityScore(
+                  property.utilities,
+                  constraints.utilities
+                )
+              ),
             },
             explanation: this.generateMatchExplanation(
               property,
@@ -527,65 +676,71 @@ export class LinearProgrammingService {
     const explanations: string[] = [];
 
     // Budget explanation
-    const budgetScore = this.calculateBudgetScore(
-      property.rent,
-      constraints.budget
-    );
-    if (budgetScore >= 80) {
+    const budgetDiff = constraints.budget.max - property.rent;
+    if (budgetDiff >= 0) {
       explanations.push(
-        `Excellent budget match (₦${property.rent.toLocaleString()} vs ₦${constraints.budget.max.toLocaleString()} max)`
+        `Rent (₦${property.rent.toLocaleString()}) is within your budget, ${
+          budgetDiff > 0 ? `saving you ₦${budgetDiff.toLocaleString()}` : "matching your maximum"
+        }`
       );
-    } else if (budgetScore >= 60) {
-      explanations.push(
-        `Good budget fit (₦${property.rent.toLocaleString()} within your range)`
-      );
-    } else if (budgetScore > 0) {
-      explanations.push(`Within budget (₦${property.rent.toLocaleString()})`);
     }
 
     // Location explanation
-    const locationScore = this.calculateLocationScore(
-      property.location,
-      constraints.location
+    explanations.push(
+      `Located in ${property.location.address}, ${property.location.city}`
     );
-    if (locationScore >= 90) {
-      explanations.push(`Perfect location match: ${property.location.city}`);
-    } else if (locationScore >= 70) {
-      explanations.push(`Great location in ${property.location.city}`);
-    } else if (locationScore >= 50) {
-      explanations.push(`Good location accessibility`);
-    }
+
+    // Bedrooms and bathrooms
+    explanations.push(
+      `${property.bedrooms} bedroom${property.bedrooms > 1 ? "s" : ""}, ${
+        property.bathrooms
+      } bathroom${property.bathrooms > 1 ? "s" : ""}`
+    );
 
     // Amenities explanation
-    const amenityScore = this.calculateAmenityScore(
-      property.amenities,
-      constraints.amenities
-    );
-    if (amenityScore >= 90) {
-      explanations.push(`All requested amenities available`);
-    } else if (amenityScore >= 70) {
-      explanations.push(`Most requested amenities included`);
-    } else if (amenityScore >= 50) {
-      explanations.push(`Essential amenities covered`);
+    if (constraints.amenities && constraints.amenities.length > 0) {
+      const matchedAmenities = property.amenities.filter((a: string) =>
+        constraints.amenities.includes(a)
+      );
+      if (matchedAmenities.length > 0) {
+        explanations.push(
+          `Includes ${matchedAmenities.length} of your required amenities: ${matchedAmenities.join(
+            ", "
+          )}`
+        );
+      }
     }
 
-    // Size explanation
-    if (property.size) {
-      explanations.push(
-        `${property.size} sqm - suitable for ${constraints.bedrooms} bedroom needs`
-      );
+    // Features explanation
+    if (constraints.features) {
+      const matchedFeatures = Object.entries(constraints.features)
+        .filter(([feature, required]) => required && property.features[feature])
+        .map(([feature]) => feature);
+      if (matchedFeatures.length > 0) {
+        explanations.push(
+          `Matches your feature preferences: ${matchedFeatures
+            .map((f) => f.charAt(0).toUpperCase() + f.slice(1))
+            .join(", ")}`
+        );
+      }
     }
 
-    // Overall score explanation
-    if (matchScore >= 90) {
-      explanations.push(
-        `Outstanding overall match (${matchScore}% compatibility)`
-      );
-    } else if (matchScore >= 80) {
-      explanations.push(`Excellent match (${matchScore}% compatibility)`);
-    } else if (matchScore >= 70) {
-      explanations.push(`Good match (${matchScore}% compatibility)`);
+    // Utilities explanation
+    if (constraints.utilities) {
+      const matchedUtilities = Object.entries(constraints.utilities)
+        .filter(([utility, required]) => required && property.utilities[utility])
+        .map(([utility]) => utility);
+      if (matchedUtilities.length > 0) {
+        explanations.push(
+          `Includes utilities: ${matchedUtilities
+            .map((u) => u.charAt(0).toUpperCase() + u.slice(1))
+            .join(", ")}`
+        );
+      }
     }
+
+    // Overall match score
+    explanations.push(`Overall match score: ${matchScore.toFixed(0)}%`);
 
     return explanations;
   }
@@ -637,6 +792,16 @@ export class LinearProgrammingService {
       if (avgLocationScore >= 70) satisfied.push("location");
       if (avgAmenityScore >= 70) satisfied.push("amenities");
       if (avgSizeScore >= 70) satisfied.push("size");
+      
+      const avgFeatureScore =
+        matches.reduce((sum, m) => sum + m.matchDetails.featureScore, 0) /
+        matches.length;
+      const avgUtilityScore =
+        matches.reduce((sum, m) => sum + m.matchDetails.utilityScore, 0) /
+        matches.length;
+      
+      if (avgFeatureScore >= 70) satisfied.push("features");
+      if (avgUtilityScore >= 70) satisfied.push("utilities");
     }
 
     return satisfied;

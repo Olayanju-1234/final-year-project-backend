@@ -33,7 +33,7 @@ export interface IUser extends Document {
 // Tenant Types
 export interface ITenant extends Document {
   _id: Types.ObjectId;
-  userId: Types.ObjectId;
+  userId: Types.ObjectId | IUser;
   preferences: {
     budget: {
       min: number;
@@ -44,9 +44,21 @@ export interface ITenant extends Document {
     preferredBedrooms: number;
     preferredBathrooms: number;
     maxCommute?: number; // in minutes
+    features?: {
+      furnished: boolean;
+      petFriendly: boolean;
+      parking: boolean;
+      balcony: boolean;
+    };
+    utilities?: {
+      electricity: boolean;
+      water: boolean;
+      internet: boolean;
+      gas: boolean;
+    };
   };
-  searchHistory: Types.ObjectId[];
-  savedProperties: Types.ObjectId[];
+  searchHistory: Types.ObjectId[] | IProperty[];
+  savedProperties: Types.ObjectId[] | IProperty[];
   createdAt: Date;
   updatedAt: Date;
 }
@@ -103,6 +115,18 @@ export interface OptimizationConstraints {
   bedrooms: number;
   bathrooms: number;
   maxCommute?: number;
+  features?: {
+    furnished: boolean;
+    petFriendly: boolean;
+    parking: boolean;
+    balcony: boolean;
+  };
+  utilities?: {
+    electricity: boolean;
+    water: boolean;
+    internet: boolean;
+    gas: boolean;
+  };
 }
 
 export interface OptimizationWeights {
@@ -110,7 +134,8 @@ export interface OptimizationWeights {
   location: number;
   amenities: number;
   size: number;
-  commute?: number;
+  features: number;
+  utilities: number;
 }
 
 export interface PropertyMatch {
@@ -122,7 +147,8 @@ export interface PropertyMatch {
     locationScore: number;
     amenityScore: number;
     sizeScore: number;
-    commuteScore?: number;
+    featureScore: number;
+    utilityScore: number;
   };
   explanation: string[];
   calculatedAt: Date;
