@@ -12,6 +12,8 @@ import { rateLimiter } from "@/middleware/rateLimiter";
 import { authRoutes } from "@/routes/auth";
 import { propertyRoutes } from "@/routes/properties";
 import { optimizationRoutes } from "@/routes/optimization";
+import { tenantRoutes } from "@/routes/tenants";
+import { communicationRoutes } from "@/routes/communication";
 
 class Server {
   private app: express.Application;
@@ -78,6 +80,8 @@ class Server {
     this.app.use(`/api/${apiVersion}/auth`, authRoutes);
     this.app.use(`/api/${apiVersion}/properties`, propertyRoutes);
     this.app.use(`/api/${apiVersion}/optimization`, optimizationRoutes);
+    this.app.use(`/api/${apiVersion}/tenants`, tenantRoutes);
+    this.app.use(`/api/${apiVersion}/communication`, communicationRoutes);
 
     // 404 handler for undefined routes
     this.app.use("*", (req, res) => {

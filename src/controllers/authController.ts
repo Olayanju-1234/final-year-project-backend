@@ -3,7 +3,7 @@ import jwt from "jsonwebtoken"
 import { validationResult } from "express-validator"
 import { User } from "@/models/User"
 import { Tenant } from "@/models/Tenant"
-import type { ApiResponse, LoginRequest, RegisterRequest } from "@/types"
+import type { ApiResponse, LoginRequest, RegisterRequest, UpdateProfileRequest, ChangePasswordRequest } from "@/types"
 import { logger } from "@/utils/logger"
 
 export class AuthController {
@@ -47,20 +47,35 @@ export class AuthController {
       await user.save()
 
       // Create tenant profile if user is a tenant
-      if (userType === "tenant" && preferences) {
+      let tenantId = null
+      if (userType === "tenant") {
+        // Use provided preferences or defaults
+        const defaultPreferences = {
+          budget: { min: 0, max: 1000000 },
+          preferredLocation: "Ikeja",
+          requiredAmenities: [],
+          preferredBedrooms: 1,
+          preferredBathrooms: 1,
+          maxCommute: 30,
+        }
+        const mergedPreferences = {
+          ...defaultPreferences,
+          ...(preferences || {}),
+        }
+        // Defensive: ensure all required fields are present and valid
+        if (!mergedPreferences.budget) mergedPreferences.budget = { min: 0, max: 1000000 }
+        if (!mergedPreferences.preferredLocation || mergedPreferences.preferredLocation.trim() === "") mergedPreferences.preferredLocation = "Ikeja"
+        if (!mergedPreferences.requiredAmenities) mergedPreferences.requiredAmenities = []
+        if (!mergedPreferences.preferredBedrooms) mergedPreferences.preferredBedrooms = 1
+        if (!mergedPreferences.preferredBathrooms) mergedPreferences.preferredBathrooms = 1
+        if (!mergedPreferences.maxCommute) mergedPreferences.maxCommute = 30
+
         const tenant = new Tenant({
           userId: user._id,
-          preferences: {
-            budget: preferences.budget || { min: 0, max: 1000000 },
-            preferredLocation: preferences.preferredLocation || "",
-            requiredAmenities: preferences.requiredAmenities || [],
-            preferredBedrooms: preferences.preferredBedrooms || 1,
-            preferredBathrooms: preferences.preferredBathrooms || 1,
-            maxCommute: preferences.maxCommute,
-          },
+          preferences: mergedPreferences,
         })
-
         await tenant.save()
+        tenantId = tenant._id
       }
 
       // Generate JWT token
@@ -87,6 +102,7 @@ export class AuthController {
             email: user.email,
             userType: user.userType,
             isVerified: user.isVerified,
+            tenantId: tenantId,
           },
         },
       } as ApiResponse)
@@ -154,6 +170,37 @@ export class AuthController {
         { expiresIn: process.env.JWT_EXPIRES_IN || "7d" }
       )
 
+      // Get tenant ID if user is a tenant
+      let tenantId = null
+      if (user.userType === "tenant") {
+        let tenant = await Tenant.findOne({ userId: user._id })
+        if (!tenant) {
+          // Defensive: create tenant profile if missing
+          const defaultPreferences = {
+            budget: { min: 0, max: 1000000 },
+            preferredLocation: "Ikeja",
+            requiredAmenities: [],
+            preferredBedrooms: 1,
+            preferredBathrooms: 1,
+            maxCommute: 30,
+          }
+          // Defensive: ensure preferredLocation is not empty
+          if (!defaultPreferences.preferredLocation || defaultPreferences.preferredLocation.trim() === "") defaultPreferences.preferredLocation = "Ikeja"
+          tenant = new Tenant({
+            userId: user._id,
+            preferences: defaultPreferences,
+          })
+          await tenant.save()
+        } else {
+          // Defensive: update tenant if preferredLocation is missing or empty
+          if (!tenant.preferences.preferredLocation || tenant.preferences.preferredLocation.trim() === "") {
+            tenant.preferences.preferredLocation = "Ikeja"
+            await tenant.save()
+          }
+        }
+        tenantId = tenant._id
+      }
+
       logger.info("User logged in successfully", {
         userId: user._id,
         email: user.email,
@@ -171,6 +218,7 @@ export class AuthController {
             email: user.email,
             userType: user.userType,
             isVerified: user.isVerified,
+            tenantId: tenantId,
           },
         },
       } as ApiResponse)
@@ -231,18 +279,42 @@ export class AuthController {
         name: user.name,
         email: user.email,
         phone: user.phone,
+        profileImage: user.profileImage,
         userType: user.userType,
         isVerified: user.isVerified,
         createdAt: user.createdAt,
       }
 
-      // If user is a tenant, include preferences
+      // If user is a tenant, include preferences and tenantId
       if (user.userType === "tenant") {
-        const tenant = await Tenant.findOne({ userId: user._id })
-        if (tenant) {
-          profile.preferences = tenant.preferences
-          profile.savedProperties = tenant.savedProperties
+        let tenant = await Tenant.findOne({ userId: user._id })
+        if (!tenant) {
+          // Defensive: create tenant profile if missing
+          const defaultPreferences = {
+            budget: { min: 0, max: 1000000 },
+            preferredLocation: "Ikeja",
+            requiredAmenities: [],
+            preferredBedrooms: 1,
+            preferredBathrooms: 1,
+            maxCommute: 30,
+          }
+          // Defensive: ensure preferredLocation is not empty
+          if (!defaultPreferences.preferredLocation || defaultPreferences.preferredLocation.trim() === "") defaultPreferences.preferredLocation = "Ikeja"
+          tenant = new Tenant({
+            userId: user._id,
+            preferences: defaultPreferences,
+          })
+          await tenant.save()
+        } else {
+          // Defensive: update tenant if preferredLocation is missing or empty
+          if (!tenant.preferences.preferredLocation || tenant.preferences.preferredLocation.trim() === "") {
+            tenant.preferences.preferredLocation = "Ikeja"
+            await tenant.save()
+          }
         }
+        profile.preferences = tenant.preferences
+        profile.savedProperties = tenant.savedProperties
+        profile.tenantId = tenant._id
       }
 
       res.status(200).json({
@@ -255,6 +327,129 @@ export class AuthController {
       res.status(500).json({
         success: false,
         message: "Failed to retrieve profile",
+        error: error instanceof Error ? error.message : "Unknown error",
+      } as ApiResponse)
+    }
+  }
+
+  /**
+   * Update user profile
+   * PUT /api/auth/profile
+   */
+  public async updateProfile(req: Request, res: Response): Promise<void> {
+    try {
+      const errors = validationResult(req)
+      if (!errors.isEmpty()) {
+        res.status(400).json({
+          success: false,
+          message: "Validation failed",
+          error: errors.array().map(e => e.msg).join(", "),
+        } as ApiResponse)
+        return
+      }
+
+      const { name, phone, profileImage }: UpdateProfileRequest = req.body
+      const userId = req.user!.id
+
+      const user = await User.findById(userId)
+      if (!user) {
+        res.status(404).json({
+          success: false,
+          message: "User not found",
+        } as ApiResponse)
+        return
+      }
+
+      // Update fields if provided
+      if (name !== undefined) user.name = name
+      if (phone !== undefined) user.phone = phone
+      if (profileImage !== undefined) user.profileImage = profileImage
+
+      await user.save()
+
+      logger.info("Profile updated successfully", {
+        userId: user._id,
+        updatedFields: Object.keys(req.body),
+      })
+
+      res.status(200).json({
+        success: true,
+        message: "Profile updated successfully",
+        data: {
+          id: user._id,
+          name: user.name,
+          email: user.email,
+          phone: user.phone,
+          profileImage: user.profileImage,
+          userType: user.userType,
+          isVerified: user.isVerified,
+        },
+      } as ApiResponse)
+    } catch (error) {
+      logger.error("Failed to update profile", error)
+      res.status(500).json({
+        success: false,
+        message: "Failed to update profile",
+        error: error instanceof Error ? error.message : "Unknown error",
+      } as ApiResponse)
+    }
+  }
+
+  /**
+   * Change user password
+   * PUT /api/auth/change-password
+   */
+  public async changePassword(req: Request, res: Response): Promise<void> {
+    try {
+      const errors = validationResult(req)
+      if (!errors.isEmpty()) {
+        res.status(400).json({
+          success: false,
+          message: "Validation failed",
+          error: errors.array().map(e => e.msg).join(", "),
+        } as ApiResponse)
+        return
+      }
+
+      const { currentPassword, newPassword }: ChangePasswordRequest = req.body
+      const userId = req.user!.id
+
+      const user = await User.findById(userId).select("+password")
+      if (!user) {
+        res.status(404).json({
+          success: false,
+          message: "User not found",
+        } as ApiResponse)
+        return
+      }
+
+      // Verify current password
+      const isCurrentPasswordValid = await user.comparePassword(currentPassword)
+      if (!isCurrentPasswordValid) {
+        res.status(400).json({
+          success: false,
+          message: "Current password is incorrect",
+        } as ApiResponse)
+        return
+      }
+
+      // Update password
+      user.password = newPassword
+      await user.save()
+
+      logger.info("Password changed successfully", {
+        userId: user._id,
+      })
+
+      res.status(200).json({
+        success: true,
+        message: "Password changed successfully",
+      } as ApiResponse)
+    } catch (error) {
+      logger.error("Failed to change password", error)
+      res.status(500).json({
+        success: false,
+        message: "Failed to change password",
         error: error instanceof Error ? error.message : "Unknown error",
       } as ApiResponse)
     }

@@ -30,6 +30,10 @@ const userSchema = new Schema<IUser>(
       trim: true,
       match: [/^\+?[\d\s-()]+$/, "Please enter a valid phone number"],
     },
+    profileImage: {
+      type: String,
+      default: null,
+    },
     userType: {
       type: String,
       enum: ["tenant", "landlord", "admin"],

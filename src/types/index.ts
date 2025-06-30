@@ -21,6 +21,7 @@ export interface IUser extends Document {
   email: string;
   password: string;
   phone: string;
+  profileImage?: string;
   userType: "tenant" | "landlord" | "admin";
   isVerified: boolean;
   isActive: boolean;
@@ -221,4 +222,15 @@ export interface OptimizationRequest {
   constraints: OptimizationConstraints;
   weights?: Partial<OptimizationWeights>;
   maxResults?: number;
+}
+
+export interface UpdateProfileRequest {
+  name?: string;
+  phone?: string;
+  profileImage?: string;
+}
+
+export interface ChangePasswordRequest {
+  currentPassword: string;
+  newPassword: string;
 }
