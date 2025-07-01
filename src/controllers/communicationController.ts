@@ -283,6 +283,10 @@ export class CommunicationController {
 
       const { propertyId, requestedDate, requestedTime, notes } = req.body;
       const tenantId = req.user?.id;
+      if (!tenantId) {
+        res.status(401).json({ success: false, message: "Unauthorized: No tenantId" });
+        return;
+      }
 
       // Verify property exists and get landlord
       const property = await Property.findById(propertyId);
