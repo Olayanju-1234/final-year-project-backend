@@ -4,6 +4,7 @@ import { User } from "@/models/User";
 import type { ApiResponse, ITenant } from "@/types";
 import { logger } from "@/utils/logger";
 import { validationResult } from "express-validator";
+import { Viewing } from "@/models/Viewing";
 
 export class TenantController {
   /**
@@ -329,6 +330,36 @@ export class TenantController {
         message: "Failed to retrieve search history",
         error: error instanceof Error ? error.message : "Unknown error",
       } as ApiResponse);
+    }
+  }
+
+  /**
+   * Create a viewing request
+   * POST /api/tenants/:tenantId/viewing-requests
+   */
+  public async createViewingRequest(req: Request, res: Response): Promise<void> {
+    try {
+      const { tenantId } = req.params;
+      const { propertyId, message, requestedDate, requestedTime, landlordId } = req.body;
+      if (!propertyId || !requestedDate || !requestedTime || !landlordId) {
+        res.status(400).json({ success: false, message: 'Property ID, landlordId, requestedDate, and requestedTime are required' });
+        return;
+      }
+      const viewing = await Viewing.create({
+        tenantId,
+        propertyId,
+        landlordId,
+        message: message || '',
+        status: 'pending',
+        requestedAt: new Date(),
+        requestedDate,
+        requestedTime,
+      });
+      logger.info('Viewing request created', { tenantId, propertyId, viewingId: viewing._id });
+      res.status(201).json({ success: true, message: 'Viewing request created', data: viewing });
+    } catch (error) {
+      logger.error('Failed to create viewing request', error);
+      res.status(500).json({ success: false, message: 'Failed to create viewing request', error: error instanceof Error ? error.message : 'Unknown error' });
     }
   }
 }

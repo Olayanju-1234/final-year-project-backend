@@ -156,4 +156,11 @@ router.get(
   tenantController.getSearchHistory
 );
 
+/**
+ * @route   POST /api/tenants/:tenantId/viewing-requests
+ * @desc    Create a viewing request
+ * @access  Private
+ */
+router.post('/:tenantId/viewing-requests', tenantController.createViewingRequest);
+
 export { router as tenantRoutes }; 

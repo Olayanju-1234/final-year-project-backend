@@ -33,8 +33,12 @@ export class LinearProgrammingService {
       process.env.LP_DEFAULT_WEIGHTS_AMENITIES || "0.15"
     ),
     size: Number.parseFloat(process.env.LP_DEFAULT_WEIGHTS_SIZE || "0.15"),
-    features: Number.parseFloat(process.env.LP_DEFAULT_WEIGHTS_FEATURES || "0.15"),
-    utilities: Number.parseFloat(process.env.LP_DEFAULT_WEIGHTS_UTILITIES || "0.1"),
+    features: Number.parseFloat(
+      process.env.LP_DEFAULT_WEIGHTS_FEATURES || "0.15"
+    ),
+    utilities: Number.parseFloat(
+      process.env.LP_DEFAULT_WEIGHTS_UTILITIES || "0.1"
+    ),
   };
 
   private readonly maxExecutionTime = Number.parseInt(
@@ -142,13 +146,23 @@ export class LinearProgrammingService {
     maxResults = 5
   ): Promise<any> {
     const startTime = Date.now();
-    const tenants = await Tenant.find({ 'preferences.budget': { $exists: true } }).populate('userId', 'name').lean();
+    const tenants = await Tenant.find({
+      "preferences.budget": { $exists: true },
+    })
+      .populate("userId", "name")
+      .lean();
 
     if (tenants.length === 0) {
-      return { matches: [], optimizationDetails: { executionTime: Date.now() - startTime, matchesFound: 0 } };
+      return {
+        matches: [],
+        optimizationDetails: {
+          executionTime: Date.now() - startTime,
+          matchesFound: 0,
+        },
+      };
     }
 
-    const tenantScores = tenants.map(tenant => {
+    const tenantScores = tenants.map((tenant) => {
       const constraints: OptimizationConstraints = {
         budget: tenant.preferences.budget,
         location: tenant.preferences.preferredLocation,
@@ -158,13 +172,17 @@ export class LinearProgrammingService {
         features: tenant.preferences.features,
         utilities: tenant.preferences.utilities,
       };
-      
-      const score = this.calculateSatisfactionScore(property, constraints, this.defaultWeights);
-      
+
+      const score = this.calculateSatisfactionScore(
+        property,
+        constraints,
+        this.defaultWeights
+      );
+
       return {
         tenant: {
           _id: tenant._id,
-          name: (tenant.userId as any)?.name || 'N/A',
+          name: (tenant.userId as any)?.name || "N/A",
         },
         matchScore: Math.round(score),
         preferencesSummary: `Budget: ₦${tenant.preferences.budget.min}-₦${tenant.preferences.budget.max}, Location: ${tenant.preferences.preferredLocation}`,
@@ -172,7 +190,7 @@ export class LinearProgrammingService {
     });
 
     const matches = tenantScores
-      .filter(match => match.matchScore >= this.minMatchThreshold)
+      .filter((match) => match.matchScore >= this.minMatchThreshold)
       .sort((a, b) => b.matchScore - a.matchScore)
       .slice(0, maxResults);
 
@@ -325,14 +343,23 @@ export class LinearProgrammingService {
     rent: number,
     budget: { min: number; max: number }
   ): number {
-    if (rent < budget.min || rent > budget.max) return 0;
+    if (rent >= budget.min && rent <= budget.max) return 100;
 
-    // Higher score for rent closer to minimum (better value)
-    const range = budget.max - budget.min;
-    if (range === 0) return 100;
+    // If rent is below min, score decreases linearly to 0 at 50% below min
+    if (rent < budget.min) {
+      const diff = budget.min - rent;
+      const threshold = budget.min * 0.5; // 50% below min is 0 score
+      return Math.max(0, 100 - (diff / threshold) * 100);
+    }
 
-    const position = (budget.max - rent) / range;
-    return position * 100;
+    // If rent is above max, score decreases linearly to 0 at 50% above max
+    if (rent > budget.max) {
+      const diff = rent - budget.max;
+      const threshold = budget.max * 0.5; // 50% above max is 0 score
+      return Math.max(0, 100 - (diff / threshold) * 100);
+    }
+
+    return 0;
   }
 
   /**
@@ -506,8 +533,7 @@ export class LinearProgrammingService {
 
       // Features constraint (1 if matches some features, 0 otherwise)
       matrix[4][j] =
-        this.calculateFeatureScore(property.features, constraints.features) >
-        30
+        this.calculateFeatureScore(property.features, constraints.features) > 30
           ? 1
           : 0;
 
@@ -680,7 +706,9 @@ export class LinearProgrammingService {
     if (budgetDiff >= 0) {
       explanations.push(
         `Rent (₦${property.rent.toLocaleString()}) is within your budget, ${
-          budgetDiff > 0 ? `saving you ₦${budgetDiff.toLocaleString()}` : "matching your maximum"
+          budgetDiff > 0
+            ? `saving you ₦${budgetDiff.toLocaleString()}`
+            : "matching your maximum"
         }`
       );
     }
@@ -704,9 +732,9 @@ export class LinearProgrammingService {
       );
       if (matchedAmenities.length > 0) {
         explanations.push(
-          `Includes ${matchedAmenities.length} of your required amenities: ${matchedAmenities.join(
-            ", "
-          )}`
+          `Includes ${
+            matchedAmenities.length
+          } of your required amenities: ${matchedAmenities.join(", ")}`
         );
       }
     }
@@ -728,7 +756,9 @@ export class LinearProgrammingService {
     // Utilities explanation
     if (constraints.utilities) {
       const matchedUtilities = Object.entries(constraints.utilities)
-        .filter(([utility, required]) => required && property.utilities[utility])
+        .filter(
+          ([utility, required]) => required && property.utilities[utility]
+        )
         .map(([utility]) => utility);
       if (matchedUtilities.length > 0) {
         explanations.push(
@@ -792,14 +822,14 @@ export class LinearProgrammingService {
       if (avgLocationScore >= 70) satisfied.push("location");
       if (avgAmenityScore >= 70) satisfied.push("amenities");
       if (avgSizeScore >= 70) satisfied.push("size");
-      
+
       const avgFeatureScore =
         matches.reduce((sum, m) => sum + m.matchDetails.featureScore, 0) /
         matches.length;
       const avgUtilityScore =
         matches.reduce((sum, m) => sum + m.matchDetails.utilityScore, 0) /
         matches.length;
-      
+
       if (avgFeatureScore >= 70) satisfied.push("features");
       if (avgUtilityScore >= 70) satisfied.push("utilities");
     }

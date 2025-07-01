@@ -1,4 +1,4 @@
-import 'dotenv/config';
+import "dotenv/config";
 import express from "express";
 import cors from "cors";
 import helmet from "helmet";
@@ -41,7 +41,12 @@ class Server {
             : ["http://localhost:3000", "http://localhost:3001"],
         credentials: true,
         methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-        allowedHeaders: ["Content-Type", "Authorization", "Cache-Control", "Pragma"],
+        allowedHeaders: [
+          "Content-Type",
+          "Authorization",
+          "Cache-Control",
+          "Pragma",
+        ],
       })
     );
 
