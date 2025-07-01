@@ -5,6 +5,7 @@ import type { ApiResponse, ITenant } from "@/types";
 import { logger } from "@/utils/logger";
 import { validationResult } from "express-validator";
 import { Viewing } from "@/models/Viewing";
+import { Property } from "@/models/Property";
 
 export class TenantController {
   /**
@@ -355,6 +356,8 @@ export class TenantController {
         requestedDate,
         requestedTime,
       });
+      // Increment inquiries for the property
+      await Property.findByIdAndUpdate(propertyId, { $inc: { inquiries: 1 } });
       logger.info('Viewing request created', { tenantId, propertyId, viewingId: viewing._id });
       res.status(201).json({ success: true, message: 'Viewing request created', data: viewing });
     } catch (error) {

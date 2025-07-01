@@ -302,6 +302,8 @@ export class CommunicationController {
         requestedTime,
         notes,
       });
+      // Increment inquiries for the property
+      await Property.findByIdAndUpdate(propertyId, { $inc: { inquiries: 1 } });
 
       const populatedViewing = await Viewing.findById(viewing._id)
         .populate("tenantId", "name email")
