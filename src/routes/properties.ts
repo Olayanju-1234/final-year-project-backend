@@ -97,6 +97,20 @@ const propertyValidation = [
 router.get("/", propertyController.getProperties)
 
 /**
+ * @route   GET /api/properties/random
+ * @desc    Get random properties for landing page
+ * @access  Public
+ */
+router.get("/random", propertyController.getRandomProperties)
+
+/**
+ * @route   GET /api/properties/stats
+ * @desc    Get aggregated property statistics for landing page
+ * @access  Public
+ */
+router.get("/stats", propertyController.getPropertyStats)
+
+/**
  * @route   GET /api/properties/:id
  * @desc    Get property by ID
  * @access  Public

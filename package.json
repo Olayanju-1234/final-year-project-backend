@@ -10,7 +10,7 @@
     "test": "jest",
     "lint": "eslint src/**/*.ts",
     "lint:fix": "eslint src/**/*.ts --fix",
-    "seed": "ts-node src/scripts/seedDatabase.ts",
+    "seed": "ts-node -r tsconfig-paths/register src/scripts/seedDatabase.ts",
     "migrate": "ts-node src/scripts/migrate.ts"
   },
   "keywords": [

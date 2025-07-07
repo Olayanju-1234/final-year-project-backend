@@ -61,6 +61,10 @@ const sampleProperties = [
     bathrooms: 2,
     size: 120,
     amenities: ["WiFi", "Parking", "Security", "Generator", "Air Conditioning"],
+    images: [
+      "https://images.unsplash.com/photo-1560448204-e02f11c3d0e2?w=800&h=600&fit=crop",
+      "https://images.unsplash.com/photo-1560448204-603b3fc33ddc?w=800&h=600&fit=crop"
+    ],
     features: {
       furnished: true,
       petFriendly: false,
@@ -93,6 +97,10 @@ const sampleProperties = [
     bathrooms: 3,
     size: 180,
     amenities: ["WiFi", "Parking", "Security", "Generator", "Swimming Pool", "Gym"],
+    images: [
+      "https://images.unsplash.com/photo-1564013799919-ab600027ffc6?w=800&h=600&fit=crop",
+      "https://images.unsplash.com/photo-1564013799919-ab600027ffc6?w=800&h=600&fit=crop"
+    ],
     features: {
       furnished: true,
       petFriendly: true,
@@ -125,6 +133,10 @@ const sampleProperties = [
     bathrooms: 1,
     size: 60,
     amenities: ["WiFi", "Security", "Generator"],
+    images: [
+      "https://images.unsplash.com/photo-1560448204-e02f11c3d0e2?w=800&h=600&fit=crop",
+      "https://images.unsplash.com/photo-1560448204-603b3fc33ddc?w=800&h=600&fit=crop"
+    ],
     features: {
       furnished: false,
       petFriendly: false,
@@ -156,6 +168,10 @@ const sampleProperties = [
     bathrooms: 3,
     size: 200,
     amenities: ["Parking", "Security", "Generator", "Garden"],
+    images: [
+      "https://images.unsplash.com/photo-1564013799919-ab600027ffc6?w=800&h=600&fit=crop",
+      "https://images.unsplash.com/photo-1560448204-e02f11c3d0e2?w=800&h=600&fit=crop"
+    ],
     features: {
       furnished: false,
       petFriendly: true,
@@ -187,6 +203,10 @@ const sampleProperties = [
     bathrooms: 2,
     size: 90,
     amenities: ["WiFi", "Security", "Generator", "Study Room"],
+    images: [
+      "https://images.unsplash.com/photo-1560448204-603b3fc33ddc?w=800&h=600&fit=crop",
+      "https://images.unsplash.com/photo-1564013799919-ab600027ffc6?w=800&h=600&fit=crop"
+    ],
     features: {
       furnished: true,
       petFriendly: false,
