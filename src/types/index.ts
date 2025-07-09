@@ -157,7 +157,7 @@ export interface PropertyMatch {
 export interface OptimizationResult {
   matches: PropertyMatch[];
   optimizationDetails: {
-    algorithm: "linear_programming";
+    algorithm: "linear_programming" | "greedy_matching";
     executionTime: number;
     constraintsSatisfied: string[];
     objectiveValue: number;

@@ -56,7 +56,7 @@ export class LinearProgrammingService {
   }
 
   /**
-   * Main optimization function using Linear Programming
+   * Main optimization function using greedy matching algorithm
    */
   public async optimizeMatching(
     constraints: OptimizationConstraints,
@@ -66,7 +66,7 @@ export class LinearProgrammingService {
     const startTime = Date.now();
 
     try {
-      logger.info("Starting Linear Programming optimization", {
+      logger.info("Starting optimization with greedy matching algorithm", {
         constraints,
         weights,
       });
@@ -87,26 +87,17 @@ export class LinearProgrammingService {
         return this.createEmptyResult(constraints, finalWeights, startTime);
       }
 
-      // Build constraint matrix and objective function
-      const { constraintMatrix, objectiveVector, propertyIds } =
-        this.buildLinearProgrammingModel(properties, constraints, finalWeights);
-
-      // Solve the linear programming problem
-      const solution = this.solveLPProblem(constraintMatrix, objectiveVector);
-
-      // Convert solution to property matches
-      const matches = this.convertSolutionToMatches(
-        solution,
-        properties,
-        propertyIds,
+      // Implement greedy matching algorithm
+      const matches = await this.greedyMatchingAlgorithm(
         constraints,
+        properties,
         finalWeights,
         maxResults
       );
 
       const executionTime = Date.now() - startTime;
 
-      logger.info("Linear Programming optimization completed", {
+      logger.info("Optimization completed", {
         executionTime,
         propertiesEvaluated: properties.length,
         matchesFound: matches.length,
@@ -115,7 +106,7 @@ export class LinearProgrammingService {
       return {
         matches,
         optimizationDetails: {
-          algorithm: "linear_programming",
+          algorithm: "greedy_matching",
           executionTime,
           constraintsSatisfied: this.getConstraintsSatisfied(
             matches,
@@ -129,13 +120,136 @@ export class LinearProgrammingService {
         constraints,
       };
     } catch (error) {
-      logger.error("Linear Programming optimization failed", error);
+      logger.error("Optimization failed", error);
       throw new Error(
         `Optimization failed: ${
           error instanceof Error ? error.message : "Unknown error"
         }`
       );
     }
+  }
+
+  /**
+   * Greedy matching algorithm for tenant-property assignment
+   */
+  private async greedyMatchingAlgorithm(
+    tenantConstraints: OptimizationConstraints,
+    properties: any[],
+    weights: OptimizationWeights,
+    maxResults: number
+  ): Promise<PropertyMatch[]> {
+    // Create a tenant object from constraints (for backward compatibility)
+    const tenant = {
+      _id: tenantConstraints.tenantId || 'current-tenant',
+      preferences: {
+        budget: tenantConstraints.budget,
+        preferredLocation: tenantConstraints.location,
+        requiredAmenities: tenantConstraints.amenities,
+        preferredBedrooms: tenantConstraints.bedrooms,
+        preferredBathrooms: tenantConstraints.bathrooms,
+        features: tenantConstraints.features,
+        utilities: tenantConstraints.utilities
+      }
+    };
+
+    const tenants = [tenant];
+    
+    // Calculate all possible tenant-property pairs with scores
+    const allPairs: Array<{
+      tenantId: string;
+      property: any;
+      score: number;
+      details: any;
+    }> = [];
+
+    for (const tenant of tenants) {
+      for (const property of properties) {
+        const constraints = {
+          budget: tenant.preferences.budget,
+          location: tenant.preferences.preferredLocation,
+          amenities: tenant.preferences.requiredAmenities,
+          bedrooms: tenant.preferences.preferredBedrooms,
+          bathrooms: tenant.preferences.preferredBathrooms,
+          features: tenant.preferences.features,
+          utilities: tenant.preferences.utilities,
+          tenantId: tenant._id
+        };
+
+        const score = this.calculateSatisfactionScore(
+          property,
+          constraints,
+          weights
+        );
+
+        if (score >= this.minMatchThreshold) {
+          allPairs.push({
+            tenantId: tenant._id,
+            property,
+            score,
+            details: {
+              budgetScore: this.calculateBudgetScore(property.rent, constraints.budget),
+              locationScore: this.calculateLocationScore(property.location, constraints.location),
+              amenityScore: this.calculateAmenityScore(property.amenities, constraints.amenities),
+              sizeScore: this.calculateSizeScore(property, constraints),
+              featureScore: this.calculateFeatureScore(property.features, constraints.features),
+              utilityScore: this.calculateUtilityScore(property.utilities, constraints.utilities)
+            }
+          });
+        }
+      }
+    }
+
+    // Sort all pairs by score (descending)
+    allPairs.sort((a, b) => b.score - a.score);
+
+    // Greedy assignment
+    const assignedTenants = new Set<string>();
+    const assignedProperties = new Set<string>();
+    const matches: PropertyMatch[] = [];
+
+    for (const pair of allPairs) {
+      if (matches.length >= maxResults) break;
+      
+      if (!assignedTenants.has(pair.tenantId)) {
+        if (!assignedProperties.has(pair.property._id.toString())) {
+          // Create match
+          const match: PropertyMatch = {
+            propertyId: pair.property._id,
+            tenantId: pair.tenantId,
+            matchScore: Math.round(pair.score),
+            matchDetails: {
+              budgetScore: Math.round(pair.details.budgetScore),
+              locationScore: Math.round(pair.details.locationScore),
+              amenityScore: Math.round(pair.details.amenityScore),
+              sizeScore: Math.round(pair.details.sizeScore),
+              featureScore: Math.round(pair.details.featureScore),
+              utilityScore: Math.round(pair.details.utilityScore),
+            },
+            explanation: this.generateMatchExplanation(
+              pair.property,
+              {
+                budget: tenant.preferences.budget,
+                location: tenant.preferences.preferredLocation,
+                amenities: tenant.preferences.requiredAmenities,
+                bedrooms: tenant.preferences.preferredBedrooms,
+                bathrooms: tenant.preferences.preferredBathrooms,
+                features: tenant.preferences.features,
+                utilities: tenant.preferences.utilities,
+                tenantId: tenant._id
+              },
+              pair.score
+            ),
+            calculatedAt: new Date(),
+          };
+
+          matches.push(match);
+          assignedTenants.add(pair.tenantId);
+          assignedProperties.add(pair.property._id.toString());
+        }
+      }
+    }
+
+    return matches;
   }
 
   /**
@@ -234,53 +348,11 @@ export class LinearProgrammingService {
       query.amenities = { $in: constraints.amenities };
     }
 
-    // Note: Features and utilities are now handled as soft constraints in the scoring phase
-    // rather than hard filters here
-
     const maxProperties = Number.parseInt(
       process.env.MAX_PROPERTIES_PER_OPTIMIZATION || "100"
     );
 
     return await Property.find(query).limit(maxProperties).lean().exec();
-  }
-
-  /**
-   * Build the Linear Programming model matrices
-   */
-  private buildLinearProgrammingModel(
-    properties: any[],
-    constraints: OptimizationConstraints,
-    weights: OptimizationWeights
-  ) {
-    const numProperties = properties.length;
-    const propertyIds = properties.map((p) => p._id.toString());
-
-    // Build objective function coefficients (maximize satisfaction)
-    const objectiveVector = new Array(numProperties);
-
-    for (let i = 0; i < numProperties; i++) {
-      const property = properties[i];
-      const satisfactionScore = this.calculateSatisfactionScore(
-        property,
-        constraints,
-        weights
-      );
-      objectiveVector[i] = satisfactionScore;
-    }
-
-    // Build constraint matrix
-    // For this implementation, we use a simplified approach
-    // In a full LP solver, you would have inequality constraints
-    const constraintMatrix = this.buildConstraintMatrix(
-      properties,
-      constraints
-    );
-
-    return {
-      constraintMatrix,
-      objectiveVector,
-      propertyIds,
-    };
   }
 
   /**
@@ -489,209 +561,6 @@ export class LinearProgrammingService {
   }
 
   /**
-   * Build constraint matrix for LP problem
-   */
-  private buildConstraintMatrix(
-    properties: any[],
-    constraints: OptimizationConstraints
-  ): Matrix {
-    const numProperties = properties.length;
-    const numConstraints = 6; // budget, location, amenities, size, features, utilities
-
-    const matrix = new Array(numConstraints);
-    for (let i = 0; i < numConstraints; i++) {
-      matrix[i] = new Array(numProperties).fill(0);
-    }
-
-    for (let j = 0; j < numProperties; j++) {
-      const property = properties[j];
-
-      // Budget constraint (1 if within budget, 0 otherwise)
-      matrix[0][j] =
-        property.rent >= constraints.budget.min &&
-        property.rent <= constraints.budget.max
-          ? 1
-          : 0;
-
-      // Location constraint (1 if matches, 0 otherwise)
-      matrix[1][j] =
-        this.calculateLocationScore(property.location, constraints.location) >
-        30
-          ? 1
-          : 0;
-
-      // Amenities constraint (1 if has required amenities, 0 otherwise)
-      matrix[2][j] =
-        this.calculateAmenityScore(property.amenities, constraints.amenities) >
-        50
-          ? 1
-          : 0;
-
-      // Size constraint (1 if reasonable size, 0 otherwise)
-      matrix[3][j] =
-        this.calculateSizeScore(property, constraints) > 30 ? 1 : 0;
-
-      // Features constraint (1 if matches some features, 0 otherwise)
-      matrix[4][j] =
-        this.calculateFeatureScore(property.features, constraints.features) > 30
-          ? 1
-          : 0;
-
-      // Utilities constraint (1 if matches some utilities, 0 otherwise)
-      matrix[5][j] =
-        this.calculateUtilityScore(property.utilities, constraints.utilities) >
-        30
-          ? 1
-          : 0;
-    }
-
-    return new Matrix(matrix);
-  }
-
-  /**
-   * Solve the Linear Programming problem
-   * This is a simplified implementation. In production, you might use
-   * a dedicated LP solver like GLPK or similar
-   */
-  private solveLPProblem(
-    constraintMatrix: Matrix,
-    objectiveVector: number[]
-  ): number[] {
-    // Simplified greedy approach that respects constraints
-    // In a full implementation, you would use simplex method or interior point method
-
-    const numProperties = objectiveVector.length;
-    const solution = new Array(numProperties).fill(0);
-
-    // Create property-score pairs and sort by objective value
-    const propertyScores = objectiveVector.map((score, index) => ({
-      index,
-      score,
-      feasible: this.checkFeasibility(constraintMatrix, index),
-    }));
-
-    // Sort by score (descending) and feasibility
-    propertyScores.sort((a, b) => {
-      if (a.feasible && !b.feasible) return -1;
-      if (!a.feasible && b.feasible) return 1;
-      return b.score - a.score;
-    });
-
-    // Select top properties that meet constraints
-    let selectedCount = 0;
-    const maxSelections = Math.min(10, numProperties); // Limit selections
-
-    for (const item of propertyScores) {
-      if (selectedCount >= maxSelections) break;
-      if (item.feasible && item.score >= this.minMatchThreshold) {
-        solution[item.index] = 1;
-        selectedCount++;
-      }
-    }
-
-    return solution;
-  }
-
-  /**
-   * Check if a property satisfies all constraints
-   */
-  private checkFeasibility(
-    constraintMatrix: Matrix,
-    propertyIndex: number
-  ): boolean {
-    const numConstraints = constraintMatrix.rows;
-    let satisfiedCount = 0;
-
-    for (let i = 0; i < numConstraints; i++) {
-      if (constraintMatrix.get(i, propertyIndex) === 1) {
-        satisfiedCount++;
-      }
-    }
-
-    // Property is feasible if it satisfies at least 4 out of 6 constraints
-    return satisfiedCount >= 4;
-  }
-
-  /**
-   * Convert LP solution to property matches
-   */
-  private convertSolutionToMatches(
-    solution: number[],
-    properties: any[],
-    propertyIds: string[],
-    constraints: OptimizationConstraints,
-    weights: OptimizationWeights,
-    maxResults: number
-  ): PropertyMatch[] {
-    const matches: PropertyMatch[] = [];
-
-    for (let i = 0; i < solution.length; i++) {
-      if (solution[i] > 0) {
-        // Property is selected
-        const property = properties[i];
-        const matchScore = this.calculateSatisfactionScore(
-          property,
-          constraints,
-          weights
-        );
-
-        if (matchScore >= this.minMatchThreshold) {
-          const match: PropertyMatch = {
-            propertyId: property._id,
-            tenantId: constraints.tenantId,
-            matchScore: Math.round(matchScore),
-            matchDetails: {
-              budgetScore: Math.round(
-                this.calculateBudgetScore(property.rent, constraints.budget)
-              ),
-              locationScore: Math.round(
-                this.calculateLocationScore(
-                  property.location,
-                  constraints.location
-                )
-              ),
-              amenityScore: Math.round(
-                this.calculateAmenityScore(
-                  property.amenities,
-                  constraints.amenities
-                )
-              ),
-              sizeScore: Math.round(
-                this.calculateSizeScore(property, constraints)
-              ),
-              featureScore: Math.round(
-                this.calculateFeatureScore(
-                  property.features,
-                  constraints.features
-                )
-              ),
-              utilityScore: Math.round(
-                this.calculateUtilityScore(
-                  property.utilities,
-                  constraints.utilities
-                )
-              ),
-            },
-            explanation: this.generateMatchExplanation(
-              property,
-              constraints,
-              matchScore
-            ),
-            calculatedAt: new Date(),
-          };
-
-          matches.push(match);
-        }
-      }
-    }
-
-    // Sort by match score and limit results
-    return matches
-      .sort((a, b) => b.matchScore - a.matchScore)
-      .slice(0, maxResults);
-  }
-
-  /**
    * Generate human-readable explanation for the match
    */
   private generateMatchExplanation(
@@ -863,7 +732,7 @@ export class LinearProgrammingService {
     return {
       matches: [],
       optimizationDetails: {
-        algorithm: "linear_programming",
+        algorithm: "greedy_matching",
         executionTime: Date.now() - startTime,
         constraintsSatisfied: [],
         objectiveValue: 0,
