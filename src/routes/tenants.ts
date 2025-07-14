@@ -161,6 +161,10 @@ router.get(
  * @desc    Create a viewing request
  * @access  Private
  */
-router.post('/:tenantId/viewing-requests', tenantController.createViewingRequest);
+router.post(
+  '/:tenantId/viewing-requests',
+  auth,
+  tenantController.createViewingRequest
+);
 
 export { router as tenantRoutes }; 

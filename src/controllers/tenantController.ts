@@ -340,19 +340,23 @@ export class TenantController {
    */
   public async createViewingRequest(req: Request, res: Response): Promise<void> {
     try {
-      const { tenantId } = req.params;
       const { propertyId, message, requestedDate, requestedTime, landlordId } = req.body;
       if (!propertyId || !requestedDate || !requestedTime || !landlordId) {
         res.status(400).json({ success: false, message: 'Property ID, landlordId, requestedDate, and requestedTime are required' });
+        return;
+      }
+      // Use the User's _id for tenantId
+      const tenantId = req.user?.id;
+      if (!tenantId) {
+        res.status(401).json({ success: false, message: 'Unauthorized: No tenantId' });
         return;
       }
       const viewing = await Viewing.create({
         tenantId,
         propertyId,
         landlordId,
-        message: message || '',
+        notes: message || '',
         status: 'pending',
-        requestedAt: new Date(),
         requestedDate,
         requestedTime,
       });
