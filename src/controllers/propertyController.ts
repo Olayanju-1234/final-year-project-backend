@@ -8,6 +8,18 @@ import { logger } from "@/utils/logger";
 import { uploadToCloudinary } from "@/config/cloudinary";
 
 export class PropertyController {
+  constructor() {
+    this.getProperties = this.getProperties.bind(this);
+    this.getPropertyById = this.getPropertyById.bind(this);
+    this.createProperty = this.createProperty.bind(this);
+    this.updateProperty = this.updateProperty.bind(this);
+    this.deleteProperty = this.deleteProperty.bind(this);
+    this.getPropertiesByLandlord = this.getPropertiesByLandlord.bind(this);
+    this.deleteImage = this.deleteImage.bind(this);
+    this.getRandomProperties = this.getRandomProperties.bind(this);
+    this.getPropertyStats = this.getPropertyStats.bind(this);
+  }
+
   /**
    * Get all properties with filtering
    * GET /api/properties
@@ -133,6 +145,39 @@ export class PropertyController {
   }
 
   /**
+   * Helper to validate property price against market average, with hard constraint fallback using env variables
+   */
+  private async isPriceReasonable(city: string, bedrooms: number, bathrooms: number, rent: number): Promise<{ valid: boolean, average: number, reason?: string }> {
+    // Find similar properties in the same city, bedrooms, bathrooms
+    const similarProps = await Property.find({
+      'location.city': city,
+      bedrooms,
+      bathrooms,
+      status: 'available',
+    }).lean();
+    if (similarProps.length === 0) {
+      // Hard constraint fallback using env variables for 1-5 bedrooms
+      const bed = Math.max(1, Math.min(5, bedrooms));
+      const minEnv = process.env[`RENT_MIN_${bed}_BEDROOM`];
+      const maxEnv = process.env[`RENT_MAX_${bed}_BEDROOM`];
+      const MIN_RENT = minEnv ? parseInt(minEnv) : 100000 * bed;
+      const MAX_RENT = maxEnv ? parseInt(maxEnv) : 1000000 * bed;
+      if (rent < MIN_RENT || rent > MAX_RENT) {
+        return {
+          valid: false,
+          average: (MIN_RENT + MAX_RENT) / 2,
+          reason: `The rent (₦${rent}) is outside the allowed range for new properties with ${bed} bedroom(s) (₦${MIN_RENT} - ₦${MAX_RENT}). Please set a more reasonable price.`
+        };
+      }
+      // No data to compare, but within hard constraint
+      return { valid: true, average: rent };
+    }
+    const avg = similarProps.reduce((sum, p) => sum + p.rent, 0) / similarProps.length;
+    // Allow up to 30% above average
+    return { valid: rent <= avg * 1.3, average: avg };
+  }
+
+  /**
    * Create new property with images
    * POST /api/properties
    */
@@ -192,6 +237,21 @@ export class PropertyController {
           gas: req.body.utilities?.gas === 'true' || req.body['utilities.gas'] === 'true' || false,
         },
       };
+
+      // Price validation
+      const { valid, average, reason } = await this.isPriceReasonable(
+        propertyData.location.city,
+        propertyData.bedrooms,
+        propertyData.bathrooms,
+        propertyData.rent
+      );
+      if (!valid) {
+        res.status(400).json({
+          success: false,
+          message: reason || `The rent (₦${propertyData.rent}) is more than 30% above the market average (₦${average.toFixed(0)}) for similar properties. Please set a more reasonable price.`,
+        } as ApiResponse);
+        return;
+      }
 
       // Handle image uploads if any
       let imageUrls: string[] = [];

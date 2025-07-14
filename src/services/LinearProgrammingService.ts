@@ -203,14 +203,15 @@ export class LinearProgrammingService {
     allPairs.sort((a, b) => b.score - a.score);
 
     // Greedy assignment
-    const assignedTenants = new Set<string>();
+    const assignedTenants = new Map<string, number>(); // tenantId -> count
     const assignedProperties = new Set<string>();
     const matches: PropertyMatch[] = [];
 
     for (const pair of allPairs) {
       if (matches.length >= maxResults) break;
-      
-      if (!assignedTenants.has(pair.tenantId)) {
+      // Allow up to 5 matches per tenant
+      const tenantMatchCount = assignedTenants.get(pair.tenantId) || 0;
+      if (tenantMatchCount < 5) {
         if (!assignedProperties.has(pair.property._id.toString())) {
           // Create match
           const match: PropertyMatch = {
@@ -243,7 +244,7 @@ export class LinearProgrammingService {
           };
 
           matches.push(match);
-          assignedTenants.add(pair.tenantId);
+          assignedTenants.set(pair.tenantId, tenantMatchCount + 1);
           assignedProperties.add(pair.property._id.toString());
         }
       }
