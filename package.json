@@ -62,5 +62,17 @@
     "nodemon": "^3.0.2",
     "ts-node": "^10.9.2",
     "typescript": "^5.3.3"
+  },
+  "_moduleAliases": {
+    "@": "dist",
+    "@models": "dist/models",
+    "@controllers": "dist/controllers",
+    "@middleware": "dist/middleware",
+    "@routes": "dist/routes",
+    "@services": "dist/services",
+    "@utils": "dist/utils",
+    "@types": "dist/types",
+    "@config": "dist/config",
+    "@scripts": "dist/scripts"
   }
 }
