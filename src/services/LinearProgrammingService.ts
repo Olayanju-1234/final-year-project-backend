@@ -8,6 +8,10 @@ import type {
 } from "@/types";
 import { logger } from "@/utils/logger";
 import { Tenant } from "@/models/Tenant";
+// --- LP Solver import ---
+// You must install this package: yarn add javascript-lp-solver
+// @ts-ignore
+const solver: any = require("javascript-lp-solver");
 
 /**
  * Linear Programming Optimization Service
@@ -19,6 +23,8 @@ import { Tenant } from "@/models/Tenant";
  * - Objective: Maximize weighted satisfaction score
  * - Constraints: Budget, location, amenities, size requirements
  * - Variables: Binary assignment variables for each property-tenant pair
+ *
+ * Uses 'javascript-lp-solver' for solving the assignment problem.
  */
 export class LinearProgrammingService {
   private static instance: LinearProgrammingService;
@@ -56,17 +62,19 @@ export class LinearProgrammingService {
   }
 
   /**
-   * Main optimization function using greedy matching algorithm
+   * Main optimization function using Linear Programming
+   *
+   * This replaces the previous greedy algorithm with a true LP assignment.
    */
   public async optimizeMatching(
     constraints: OptimizationConstraints,
     weights: Partial<OptimizationWeights> = {},
-    maxResults = 10
+    maxResults = 5
   ): Promise<OptimizationResult> {
     const startTime = Date.now();
 
     try {
-      logger.info("Starting optimization with greedy matching algorithm", {
+      logger.info("Starting optimization with Linear Programming algorithm", {
         constraints,
         weights,
       });
@@ -83,12 +91,17 @@ export class LinearProgrammingService {
       // Fetch available properties based on hard constraints
       const properties = await this.fetchEligibleProperties(constraints);
 
+      logger.info(`[LP DEBUG] Properties fetched for matching: ${properties.length}`);
+      if (properties.length > 0) {
+        logger.info(`[LP DEBUG] First property sample:`, properties[0]);
+      }
+
       if (properties.length === 0) {
         return this.createEmptyResult(constraints, finalWeights, startTime);
       }
 
-      // Implement greedy matching algorithm
-      const matches = await this.greedyMatchingAlgorithm(
+      // --- LP Assignment ---
+      const matches = await this.linearProgrammingAssignment(
         constraints,
         properties,
         finalWeights,
@@ -106,7 +119,7 @@ export class LinearProgrammingService {
       return {
         matches,
         optimizationDetails: {
-          algorithm: "greedy_matching",
+          algorithm: "linear_programming",
           executionTime,
           constraintsSatisfied: this.getConstraintsSatisfied(
             matches,
@@ -127,130 +140,6 @@ export class LinearProgrammingService {
         }`
       );
     }
-  }
-
-  /**
-   * Greedy matching algorithm for tenant-property assignment
-   */
-  private async greedyMatchingAlgorithm(
-    tenantConstraints: OptimizationConstraints,
-    properties: any[],
-    weights: OptimizationWeights,
-    maxResults: number
-  ): Promise<PropertyMatch[]> {
-    // Create a tenant object from constraints (for backward compatibility)
-    const tenant = {
-      _id: tenantConstraints.tenantId || 'current-tenant',
-      preferences: {
-        budget: tenantConstraints.budget,
-        preferredLocation: tenantConstraints.location,
-        requiredAmenities: tenantConstraints.amenities,
-        preferredBedrooms: tenantConstraints.bedrooms,
-        preferredBathrooms: tenantConstraints.bathrooms,
-        features: tenantConstraints.features,
-        utilities: tenantConstraints.utilities
-      }
-    };
-
-    const tenants = [tenant];
-    
-    // Calculate all possible tenant-property pairs with scores
-    const allPairs: Array<{
-      tenantId: string;
-      property: any;
-      score: number;
-      details: any;
-    }> = [];
-
-    for (const tenant of tenants) {
-      for (const property of properties) {
-        const constraints = {
-          budget: tenant.preferences.budget,
-          location: tenant.preferences.preferredLocation,
-          amenities: tenant.preferences.requiredAmenities,
-          bedrooms: tenant.preferences.preferredBedrooms,
-          bathrooms: tenant.preferences.preferredBathrooms,
-          features: tenant.preferences.features,
-          utilities: tenant.preferences.utilities,
-          tenantId: tenant._id
-        };
-
-        const score = this.calculateSatisfactionScore(
-          property,
-          constraints,
-          weights
-        );
-
-        if (score >= this.minMatchThreshold) {
-          allPairs.push({
-            tenantId: tenant._id,
-            property,
-            score,
-            details: {
-              budgetScore: this.calculateBudgetScore(property.rent, constraints.budget),
-              locationScore: this.calculateLocationScore(property.location, constraints.location),
-              amenityScore: this.calculateAmenityScore(property.amenities, constraints.amenities),
-              sizeScore: this.calculateSizeScore(property, constraints),
-              featureScore: this.calculateFeatureScore(property.features, constraints.features),
-              utilityScore: this.calculateUtilityScore(property.utilities, constraints.utilities)
-            }
-          });
-        }
-      }
-    }
-
-    // Sort all pairs by score (descending)
-    allPairs.sort((a, b) => b.score - a.score);
-
-    // Greedy assignment
-    const assignedTenants = new Map<string, number>(); // tenantId -> count
-    const assignedProperties = new Set<string>();
-    const matches: PropertyMatch[] = [];
-
-    for (const pair of allPairs) {
-      if (matches.length >= maxResults) break;
-      // Allow up to 5 matches per tenant
-      const tenantMatchCount = assignedTenants.get(pair.tenantId) || 0;
-      if (tenantMatchCount < 5) {
-        if (!assignedProperties.has(pair.property._id.toString())) {
-          // Create match
-          const match: PropertyMatch = {
-            propertyId: pair.property._id,
-            tenantId: pair.tenantId,
-            matchScore: Math.round(pair.score),
-            matchDetails: {
-              budgetScore: Math.round(pair.details.budgetScore),
-              locationScore: Math.round(pair.details.locationScore),
-              amenityScore: Math.round(pair.details.amenityScore),
-              sizeScore: Math.round(pair.details.sizeScore),
-              featureScore: Math.round(pair.details.featureScore),
-              utilityScore: Math.round(pair.details.utilityScore),
-            },
-            explanation: this.generateMatchExplanation(
-              pair.property,
-              {
-                budget: tenant.preferences.budget,
-                location: tenant.preferences.preferredLocation,
-                amenities: tenant.preferences.requiredAmenities,
-                bedrooms: tenant.preferences.preferredBedrooms,
-                bathrooms: tenant.preferences.preferredBathrooms,
-                features: tenant.preferences.features,
-                utilities: tenant.preferences.utilities,
-                tenantId: tenant._id
-              },
-              pair.score
-            ),
-            calculatedAt: new Date(),
-          };
-
-          matches.push(match);
-          assignedTenants.set(pair.tenantId, tenantMatchCount + 1);
-          assignedProperties.add(pair.property._id.toString());
-        }
-      }
-    }
-
-    return matches;
   }
 
   /**
@@ -743,6 +632,136 @@ export class LinearProgrammingService {
       weights,
       constraints,
     };
+  }
+
+  /**
+   * Linear Programming assignment for tenant-property matching
+   *
+   * This builds and solves a binary assignment LP to maximize the weighted satisfaction score.
+   * Uses 'javascript-lp-solver'.
+   */
+  private async linearProgrammingAssignment(
+    tenantConstraints: OptimizationConstraints,
+    properties: any[],
+    weights: OptimizationWeights,
+    maxResults: number
+  ): Promise<PropertyMatch[]> {
+    // For this project, we assume a single tenant (from constraints) and many properties.
+    // The LP will select up to maxResults properties to maximize total satisfaction.
+
+    // 1. Build variables and scores
+    // Each property gets a binary variable: 1 if selected, 0 otherwise
+    const variables: Record<string, any> = {}; // key: propertyId, value: variable definition
+    const propertyIdList: string[] = [];
+    const propertyScoreMap: Record<string, number> = {};
+    const propertyDetailsMap: Record<string, any> = {};
+
+    logger.info(`[LP DEBUG] Scoring properties for LP model...`);
+    for (const property of properties) {
+      const score = this.calculateSatisfactionScore(
+        property,
+        tenantConstraints,
+        weights
+      );
+      logger.info(`[LP DEBUG] Property ${property._id}: score = ${score}`);
+      if (score >= this.minMatchThreshold) {
+        const propertyId = property._id.toString();
+        propertyIdList.push(propertyId);
+        propertyScoreMap[propertyId] = score;
+        propertyDetailsMap[propertyId] = {
+          budgetScore: this.calculateBudgetScore(property.rent, tenantConstraints.budget),
+          locationScore: this.calculateLocationScore(property.location, tenantConstraints.location),
+          amenityScore: this.calculateAmenityScore(property.amenities, tenantConstraints.amenities),
+          sizeScore: this.calculateSizeScore(property, tenantConstraints),
+          featureScore: this.calculateFeatureScore(property.features, tenantConstraints.features),
+          utilityScore: this.calculateUtilityScore(property.utilities, tenantConstraints.utilities)
+        };
+        // Each variable is binary: 1 if property is selected, 0 otherwise
+        variables[propertyId] = {
+          score,
+          maxSelected: 1 // Only one tenant, so each property can be assigned at most once
+        };
+      }
+    }
+
+    logger.info(`[LP DEBUG] Properties included in LP model: ${propertyIdList.length}`);
+    if (propertyIdList.length > 0) {
+      logger.info(`[LP DEBUG] First propertyId in LP model: ${propertyIdList[0]}, score: ${propertyScoreMap[propertyIdList[0]]}`);
+    }
+
+    // 2. Build LP model for javascript-lp-solver
+    /**
+     * LP Model structure for javascript-lp-solver:
+     * {
+     *   optimize: "score",
+     *   opType: "max",
+     *   constraints: { maxSelected: { "max": maxResults } },
+     *   variables: {
+     *     propertyId1: { score: 87, maxSelected: 1 },
+     *     propertyId2: { score: 92, maxSelected: 1 },
+     *     ...
+     *   },
+     *   ints: { propertyId1: 1, propertyId2: 1, ... }
+     * }
+     */
+    const model: any = {
+      optimize: "score",
+      opType: "max",
+      constraints: {
+        maxSelected: { max: maxResults },
+      },
+      variables: {},
+      ints: {},
+    };
+
+    // Each property variable is binary (0 or 1)
+    for (const propertyId of propertyIdList) {
+      model.variables[propertyId] = {
+        score: propertyScoreMap[propertyId],
+        maxSelected: 1, // Used for the sum constraint
+      };
+      model.ints[propertyId] = 1; // Binary variable
+      // Add per-variable constraint: each property can be selected at most once
+      model.constraints[propertyId] = { max: 1 };
+    }
+
+    logger.info(`[LP DEBUG] LP model constructed:`, JSON.stringify(model, null, 2));
+
+    // 3. Solve LP
+    // The solver will select up to maxResults properties to maximize total score
+    const results = solver.Solve(model);
+    logger.info(`[LP DEBUG] LP solver results:`, results);
+    // results[propertyId] = 1 if selected, 0 otherwise
+
+    // 4. Parse results into PropertyMatch[]
+    const matches: PropertyMatch[] = [];
+    for (const propertyId of propertyIdList) {
+      if (results[propertyId] && results[propertyId] >= 0.5) {
+        const property = properties.find((p) => p._id.toString() === propertyId);
+        if (!property) continue;
+        const details = propertyDetailsMap[propertyId];
+        matches.push({
+          propertyId: property._id,
+          tenantId: tenantConstraints.tenantId || 'current-tenant',
+          matchScore: Math.round(propertyScoreMap[propertyId]),
+          matchDetails: {
+            budgetScore: Math.round(details.budgetScore),
+            locationScore: Math.round(details.locationScore),
+            amenityScore: Math.round(details.amenityScore),
+            sizeScore: Math.round(details.sizeScore),
+            featureScore: Math.round(details.featureScore),
+            utilityScore: Math.round(details.utilityScore),
+          },
+          explanation: this.generateMatchExplanation(
+            property,
+            tenantConstraints,
+            propertyScoreMap[propertyId]
+          ),
+          calculatedAt: new Date(),
+        });
+      }
+    }
+    return matches;
   }
 }
 

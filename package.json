@@ -34,6 +34,7 @@
     "express-rate-limit": "^7.1.5",
     "express-validator": "^7.0.1",
     "helmet": "^7.1.0",
+    "javascript-lp-solver": "^0.4.24",
     "jsonwebtoken": "8",
     "mathjs": "^12.2.0",
     "ml-matrix": "^6.10.7",
