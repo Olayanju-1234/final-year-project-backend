@@ -317,3 +317,134 @@ APP_URL=https://your-frontend.vercel.app
 BASE_URL=https://your-api.onrender.com
 ```
 
+---
+
+## Architecture
+
+```mermaid
+graph TD
+    Tenant -->|Search / Book| API[RentMatch API - Express]
+    Landlord -->|List Property| API
+
+    API --> Auth[JWT Auth Middleware]
+    Auth --> PropRoutes[Property Routes]
+    Auth --> OptRoutes[Optimization Routes]
+    Auth --> PayRoutes[Payment Routes]
+    Auth --> CommRoutes[Communication Routes]
+
+    OptRoutes --> LP[Linear Programming Solver]
+    LP --> Score[Match Score Calculator]
+    Score --> MongoDB[(MongoDB)]
+
+    PayRoutes -->|POST /payments/viewing/:id/deposit| Stripe[Stripe Checkout]
+    Stripe -->|webhook| API
+    API -->|Verify HMAC-SHA256| MongoDB
+    API --> Cloudinary[Cloudinary CDN]
+```
+
+## Data Model — ERD
+
+```mermaid
+erDiagram
+    User {
+        ObjectId _id
+        string name
+        string email
+        string userType
+        bool isVerified
+    }
+
+    Property {
+        ObjectId _id
+        ObjectId landlordId
+        string title
+        number rent
+        number bedrooms
+        number bathrooms
+        string status
+        string[] amenities
+        string[] images
+    }
+
+    Tenant {
+        ObjectId _id
+        ObjectId userId
+        object preferences
+        ObjectId[] savedProperties
+    }
+
+    Viewing {
+        ObjectId _id
+        ObjectId tenantId
+        ObjectId landlordId
+        ObjectId propertyId
+        date requestedDate
+        string status
+    }
+
+    ViewingPayment {
+        ObjectId _id
+        ObjectId viewingId
+        number amount
+        string currency
+        string status
+        string stripe_session_id
+        string stripe_payment_intent_id
+    }
+
+    Message {
+        ObjectId _id
+        ObjectId fromUserId
+        ObjectId toUserId
+        ObjectId propertyId
+        string messageType
+    }
+
+    User ||--o{ Property : "lists (landlord)"
+    User ||--|| Tenant : "has profile (tenant)"
+    User ||--o{ Viewing : "books (tenant)"
+    User ||--o{ Viewing : "hosts (landlord)"
+    Property ||--o{ Viewing : "subject of"
+    Viewing ||--o| ViewingPayment : "secured by deposit"
+    Tenant }|--o{ Property : "matched via LP algorithm"
+    User ||--o{ Message : "sends/receives"
+```
+
+## Optimization Flow
+
+```mermaid
+sequenceDiagram
+    participant Tenant
+    participant API
+    participant LP as LP Solver
+    participant DB as MongoDB
+
+    Tenant->>API: POST /optimization/match {constraints, weights}
+    API->>DB: Fetch available properties
+    DB-->>API: Property list
+    API->>LP: Solve: Maximize Σ(weight_i × score_i × x_i)
+    LP->>LP: Apply budget, location, amenity constraints
+    LP-->>API: Ranked matches with scores + explanations
+    API-->>Tenant: {matches[], optimizationDetails}
+```
+
+## Viewing Deposit Flow
+
+```mermaid
+sequenceDiagram
+    participant Tenant
+    participant API
+    participant Stripe
+
+    Tenant->>API: POST /payments/viewing/:id/deposit
+    API->>Stripe: Create £50 CheckoutSession
+    Stripe-->>Tenant: Hosted payment page
+    Tenant->>Stripe: Pay
+    Stripe->>API: POST /payments/webhook (checkout.session.completed)
+    API->>API: Verify signature + idempotency check
+    API->>API: Mark ViewingPayment as "paid"
+
+    Note over API,Stripe: After viewing completes
+    API->>Stripe: Create Refund (£50 back to tenant)
+```
+
