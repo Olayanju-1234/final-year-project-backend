@@ -16,6 +16,7 @@ import { propertyRoutes } from "@/routes/properties";
 import { optimizationRoutes } from "@/routes/optimization";
 import { tenantRoutes } from "@/routes/tenants";
 import { communicationRoutes } from "@/routes/communication";
+import { paymentRoutes } from "@/routes/payments";
 
 class Server {
   private app: express.Application;
@@ -94,6 +95,7 @@ class Server {
     this.app.use(`/api/${apiVersion}/optimization`, optimizationRoutes);
     this.app.use(`/api/${apiVersion}/tenants`, tenantRoutes);
     this.app.use(`/api/${apiVersion}/communication`, communicationRoutes);
+    this.app.use(`/api/${apiVersion}/payments`, paymentRoutes);
 
     // 404 handler for undefined routes
     this.app.use("*", (req, res) => {
