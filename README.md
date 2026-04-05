@@ -269,3 +269,51 @@ MIT License - Academic Project
 ---
 
 **Note**: This backend is specifically designed for a final year project focusing on Linear Programming optimization in property matching. The mathematical model and implementation demonstrate practical application of optimization algorithms in real estate technology.
+
+---
+
+## Payment Integration
+
+RentMatch includes a Stripe-powered viewing deposit system to reduce no-shows and protect landlords' time.
+
+### Flow
+
+```
+Tenant requests viewing → Landlord confirms → Tenant pays £50 deposit
+       │
+       ▼
+  Stripe Checkout Session
+       │
+       ▼
+  stripe-signature webhook → deposit marked "paid" in DB
+       │
+  ┌────┴────────────────────┐
+  │ Viewing completed?       │
+  ├──── Yes ──────────────▶ Stripe Refund issued (tenant gets £50 back)
+  └──── No-show ──────────▶ Deposit forfeited (landlord compensated)
+```
+
+### Security
+- Webhook signature verified with HMAC-SHA256 (`stripe.webhooks.constructEvent`)
+- Raw body preserved before `express.json()` middleware
+- Idempotency: duplicate webhook deliveries are a no-op (session ID checked)
+- 30-minute Checkout Session expiry to prevent stale links
+- Replay protection via Stripe's built-in timestamp tolerance
+
+### Payment Endpoints
+
+| Method | Endpoint | Auth | Description |
+|--------|----------|------|-------------|
+| POST | `/api/v1/payments/viewing/:id/deposit` | tenant | Create Stripe Checkout Session for deposit |
+| GET | `/api/v1/payments/viewing/:id/deposit` | tenant/landlord | Get deposit payment status |
+| POST | `/api/v1/payments/webhook` | — | Stripe webhook receiver |
+
+### Environment Variables (Stripe)
+
+```env
+STRIPE_SECRET_KEY=sk_test_...
+STRIPE_WEBHOOK_SECRET=whsec_...
+APP_URL=https://your-frontend.vercel.app
+BASE_URL=https://your-api.onrender.com
+```
+
