@@ -1,5 +1,5 @@
 import { Router, Request, Response, NextFunction } from 'express';
-import { authenticate } from '@/middleware/auth';
+import { auth } from '@/middleware/auth';
 import {
   createViewingDepositSession,
   getViewingDepositStatus,
@@ -33,13 +33,13 @@ paymentRoutes.post('/webhook', rawBodyCollector, handleStripeWebhook);
 /** Create a viewing deposit Checkout Session */
 paymentRoutes.post(
   '/viewing/:viewingId/deposit',
-  authenticate,
+  auth,
   createViewingDepositSession,
 );
 
 /** Get the deposit payment status for a viewing */
 paymentRoutes.get(
   '/viewing/:viewingId/deposit',
-  authenticate,
+  auth,
   getViewingDepositStatus,
 );
