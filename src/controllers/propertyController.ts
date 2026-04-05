@@ -182,14 +182,9 @@ export class PropertyController {
    * POST /api/properties
    */
   public async createProperty(req: Request, res: Response): Promise<void> {
-    console.log('DEBUG: req.files =', req.files)
     try {
-      console.log("Received request body:", req.body) // Debug log
-      console.log("Received files:", req.files) // Debug log
-      
       const errors = validationResult(req);
       if (!errors.isEmpty()) {
-        console.log("Validation errors:", errors.array()) // Debug log
         res.status(400).json({
           success: false,
           message: "Validation failed",

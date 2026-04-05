@@ -43,8 +43,6 @@ const propertyValidation = [
 
   // Custom validation for features and utilities from form data
   (req: any, res: any, next: any) => {
-    console.log("Raw request body:", req.body) // Debug log
-    
     // Parse features from form data
     const features = {
       furnished: req.body['features.furnished'] === 'true',
@@ -69,10 +67,6 @@ const propertyValidation = [
     } else if (req.body.amenities) {
       amenities = [req.body.amenities]
     }
-    
-    console.log("Parsed features:", features) // Debug log
-    console.log("Parsed utilities:", utilities) // Debug log
-    console.log("Parsed amenities:", amenities) // Debug log
     
     // Add parsed objects to request body
     req.body.features = features
