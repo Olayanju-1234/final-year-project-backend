@@ -37,15 +37,20 @@ class Server {
     // CORS configuration
     this.app.use(
       cors({
-        origin:
-          process.env.NODE_ENV === "production"
-            ? ["https://final-year-project-frontend-sandy.vercel.app/"]
-            : [
-                "http://localhost:3000",
-                "http://localhost:3001",
-                "https://final-year-project-frontend-sandy.vercel.app/",
-                "http://localhost:3001/api/v1",
-              ],
+        origin: (origin, callback) => {
+          const allowed = [
+            "http://localhost:3000",
+            "http://localhost:3001",
+            process.env.APP_URL,
+          ].filter(Boolean);
+          // Allow requests with no origin (curl, Postman, server-to-server)
+          if (!origin) return callback(null, true);
+          // Allow any vercel.app preview deployment for this project
+          if (origin.includes("vercel.app") || allowed.includes(origin)) {
+            return callback(null, true);
+          }
+          callback(new Error(`CORS: origin ${origin} not allowed`));
+        },
         credentials: true,
         methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
         allowedHeaders: [
