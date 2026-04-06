@@ -2,7 +2,7 @@ services:
   - type: web
     name: rentmatch-api
     runtime: node
-    buildCommand: yarn install --production=false && yarn build
+    buildCommand: yarn install && yarn build
     startCommand: node dist/server.js
     plan: free
     healthCheckPath: /health
