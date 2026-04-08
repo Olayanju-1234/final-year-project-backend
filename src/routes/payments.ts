@@ -1,6 +1,7 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import { auth } from '@/middleware/auth';
 import { rateLimiter } from '@/middleware/rateLimiter';
+import { startConnectOnboarding, getConnectStatus } from '@/controllers/connectController';
 import {
   createViewingDepositSession,
   createPaystackDepositSession,
@@ -84,6 +85,12 @@ paymentRoutes.get('/history', auth, getPaymentHistory);
 
 /** Activity/audit log for the authenticated user */
 paymentRoutes.get('/activity', auth, getActivityLog);
+
+/** Stripe Connect — start Express account onboarding for landlord payouts */
+paymentRoutes.post('/connect/onboard', auth, startConnectOnboarding);
+
+/** Stripe Connect — check onboarding status of landlord's connected account */
+paymentRoutes.get('/connect/status', auth, getConnectStatus);
 
 /** Create Stripe Checkout Session for a subscription plan (Pro / Enterprise) */
 paymentRoutes.post('/subscription/checkout', auth, createSubscriptionCheckout);

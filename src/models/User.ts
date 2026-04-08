@@ -47,6 +47,11 @@ const userSchema = new Schema<IUser>(
       type: Boolean,
       default: true,
     },
+    // Stripe Connect — landlord payout account
+    stripe_account_id: { type: String, sparse: true },
+    stripe_onboarding_complete: { type: Boolean, default: false },
+    // Stripe Customer — for subscription billing portal
+    stripe_customer_id: { type: String, sparse: true },
   },
   {
     timestamps: true,
