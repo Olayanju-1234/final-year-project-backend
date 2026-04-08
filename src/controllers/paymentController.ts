@@ -6,6 +6,7 @@ import { ViewingPayment } from '@/models/ViewingPayment';
 import { Viewing } from '@/models/Viewing';
 import { AuditLog } from '@/models/AuditLog';
 import { writeAuditLog } from '@/utils/auditLogger';
+import { retryWithBackoff } from '@/utils/retryWithBackoff';
 import { logger } from '@/utils/logger';
 
 const APP_URL = process.env.APP_URL ?? 'http://localhost:3000';
@@ -383,13 +384,17 @@ export const requestRefund = async (
       ip: req.ip,
     });
 
-    // Issue refund via the correct provider
+    // Issue refund via the correct provider — wrapped in retry with exponential backoff
+    // Stripe idempotency key ensures retries never produce a second refund
     try {
       if (payment.provider === 'stripe' && payment.stripe_payment_intent_id) {
-        const refund = await StripeService.refundViewingDeposit(
-          payment.stripe_payment_intent_id,
-          'viewing_completed',
-          String(viewingId),
+        const refund = await retryWithBackoff(
+          () => StripeService.refundViewingDeposit(
+            payment.stripe_payment_intent_id!,
+            'viewing_completed',
+            String(viewingId),
+          ),
+          { maxAttempts: 4, baseDelayMs: 500, label: `stripe_refund:${viewingId}` },
         );
 
         await ViewingPayment.findOneAndUpdate(

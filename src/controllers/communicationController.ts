@@ -6,6 +6,7 @@ import { User } from "@/models/User";
 import { ViewingPayment } from "@/models/ViewingPayment";
 import { StripeService } from "@/services/StripeService";
 import { writeAuditLog } from "@/utils/auditLogger";
+import { retryWithBackoff } from "@/utils/retryWithBackoff";
 import type { ApiResponse, IMessage, IViewing } from "@/types";
 import { logger } from "@/utils/logger";
 import { validationResult } from "express-validator";
@@ -467,10 +468,13 @@ async function autoRefundDeposit(viewingId: string, trigger: string): Promise<vo
     });
 
     if (payment.provider === 'stripe' && payment.stripe_payment_intent_id) {
-      const refund = await StripeService.refundViewingDeposit(
-        payment.stripe_payment_intent_id,
-        reason as 'viewing_completed' | 'landlord_cancelled',
-        viewingId,
+      const refund = await retryWithBackoff(
+        () => StripeService.refundViewingDeposit(
+          payment.stripe_payment_intent_id!,
+          reason as 'viewing_completed' | 'landlord_cancelled',
+          viewingId,
+        ),
+        { maxAttempts: 4, baseDelayMs: 500, label: `auto_refund:${viewingId}` },
       );
 
       await ViewingPayment.findOneAndUpdate(
