@@ -1,5 +1,6 @@
 import "dotenv/config";
 import 'module-alias/register';
+import { createServer } from 'http';
 import express from "express";
 import cors from "cors";
 import helmet from "helmet";
@@ -8,6 +9,7 @@ import morgan from "morgan";
 import { database } from "@/config/database";
 import { logger } from "@/utils/logger";
 import { rateLimiter } from "@/middleware/rateLimiter";
+import { socketService } from "@/services/SocketService";
 
 // Import routes
 import { authRoutes } from "@/routes/auth";
@@ -30,6 +32,11 @@ class Server {
     this.initializeMiddleware();
     this.initializeRoutes();
     this.initializeErrorHandling();
+  }
+
+  /** Expose the Express app for http.createServer */
+  getApp(): express.Application {
+    return this.app;
   }
 
   private initializeMiddleware(): void {
@@ -187,8 +194,19 @@ class Server {
       // Connect to database
       await database.connect();
 
+      // Wrap express in an http.Server so Socket.io can share the port
+      const httpServer = createServer(this.app);
+
+      const corsOrigins = [
+        'http://localhost:3000',
+        'http://localhost:3001',
+        process.env.APP_URL,
+      ].filter(Boolean) as string[];
+
+      socketService.init(httpServer, corsOrigins);
+
       // Start server
-      this.app.listen(this.port, () => {
+      httpServer.listen(this.port, () => {
         logger.info(`🚀 RentMatch API Server started successfully`);
         logger.info(`📍 Server running on port ${this.port}`);
         logger.info(`🌍 Environment: ${process.env.NODE_ENV}`);

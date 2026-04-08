@@ -5,6 +5,7 @@ import { Property } from "@/models/Property";
 import { User } from "@/models/User";
 import { ViewingPayment } from "@/models/ViewingPayment";
 import { StripeService } from "@/services/StripeService";
+import { socketService } from "@/services/SocketService";
 import { writeAuditLog } from "@/utils/auditLogger";
 import { retryWithBackoff } from "@/utils/retryWithBackoff";
 import type { ApiResponse, IMessage, IViewing } from "@/types";
@@ -75,6 +76,15 @@ export class CommunicationController {
         fromUserId,
         toUserId,
         messageType,
+      });
+
+      // Real-time notification to recipient
+      socketService.emit(String(toUserId), 'message:new', {
+        messageId: String(newMessage._id),
+        fromUserId: String(fromUserId),
+        subject,
+        messageType,
+        propertyId: propertyId ? String(propertyId) : undefined,
       });
 
       res.status(201).json({
@@ -413,6 +423,16 @@ export class CommunicationController {
       }
 
       logger.info("Viewing status updated", { viewingId: id, status, userId });
+
+      // Real-time notification to tenant and landlord
+      const tenantId = String((viewing.tenantId as any)?._id ?? viewing.tenantId);
+      const landlordId = String((viewing.landlordId as any)?._id ?? viewing.landlordId);
+      const payload = {
+        viewingId: id,
+        status,
+        propertyTitle: (viewing.propertyId as any)?.title ?? '',
+      };
+      socketService.emitToMany([tenantId, landlordId], 'viewing:status_updated', payload);
 
       // Auto-refund: fire-and-forget when viewing is completed or landlord cancels
       if (status === 'completed' || status === 'cancelled') {
