@@ -25,6 +25,11 @@ export interface IUser extends Document {
   userType: "tenant" | "landlord" | "admin";
   isVerified: boolean;
   isActive: boolean;
+  // Stripe Connect — landlord payout account
+  stripe_account_id?: string;
+  stripe_onboarding_complete?: boolean;
+  // Stripe Customer — for subscription billing portal
+  stripe_customer_id?: string;
   createdAt: Date;
   updatedAt: Date;
   comparePassword(candidatePassword: string): Promise<boolean>;
