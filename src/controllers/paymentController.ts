@@ -525,6 +525,95 @@ export const getActivityLog = async (
   }
 };
 
+// ─── Subscription ─────────────────────────────────────────────────────────────
+
+/**
+ * POST /api/v1/payments/subscription/checkout
+ *
+ * Creates a Stripe Checkout Session for a subscription plan (Pro / Enterprise).
+ * Requires STRIPE_PRO_PRICE_ID or STRIPE_ENTERPRISE_PRICE_ID set in env.
+ * Landlord must create products + prices in Stripe dashboard first.
+ * body: { plan: 'pro' | 'enterprise' }
+ */
+export const createSubscriptionCheckout = async (
+  req: Request,
+  res: Response,
+): Promise<void> => {
+  try {
+    const landlordId = (req as any).user.id;
+    const landlordEmail = (req as any).user.email;
+    const { plan } = req.body as { plan: 'pro' | 'enterprise' };
+
+    const PRICE_IDS: Record<string, string | undefined> = {
+      pro: process.env.STRIPE_PRO_PRICE_ID,
+      enterprise: process.env.STRIPE_ENTERPRISE_PRICE_ID,
+    };
+
+    const priceId = PRICE_IDS[plan];
+    if (!priceId) {
+      res.status(400).json({
+        success: false,
+        message: `Stripe Price ID for plan "${plan}" is not configured. Add STRIPE_${plan.toUpperCase()}_PRICE_ID to environment variables.`,
+      });
+      return;
+    }
+
+    const session = await StripeService.createSubscriptionCheckout({
+      landlordEmail,
+      landlordId,
+      priceId,
+      planName: plan,
+      successUrl: `${APP_URL}/property-manager-dashboard?tab=account&upgraded=${plan}`,
+      cancelUrl: `${APP_URL}/property-manager-dashboard?tab=account`,
+    });
+
+    await writeAuditLog({
+      action: 'subscription.checkout_created',
+      actorId: landlordId,
+      actorType: 'landlord',
+      targetId: session.id,
+      targetType: 'StripeCheckoutSession',
+      metadata: { plan, type: 'subscription_checkout' },
+    });
+
+    res.status(200).json({ success: true, data: { checkout_url: session.url } });
+  } catch (err: any) {
+    logger.error('Error creating subscription checkout', { error: err.message });
+    res.status(500).json({ success: false, message: 'Failed to create subscription checkout' });
+  }
+};
+
+/**
+ * POST /api/v1/payments/billing-portal
+ *
+ * Creates a Stripe Billing Portal session for an existing subscriber.
+ * Requires body: { stripeCustomerId: string }
+ * Landlords get their customer ID stored after first successful subscription.
+ */
+export const createBillingPortalSession = async (
+  req: Request,
+  res: Response,
+): Promise<void> => {
+  try {
+    const { stripeCustomerId } = req.body as { stripeCustomerId: string };
+
+    if (!stripeCustomerId) {
+      res.status(400).json({ success: false, message: 'No active Stripe subscription found.' });
+      return;
+    }
+
+    const session = await StripeService.createBillingPortalSession({
+      customerId: stripeCustomerId,
+      returnUrl: `${APP_URL}/property-manager-dashboard?tab=account`,
+    });
+
+    res.status(200).json({ success: true, data: { portal_url: session.url } });
+  } catch (err: any) {
+    logger.error('Error creating billing portal session', { error: err.message });
+    res.status(500).json({ success: false, message: 'Failed to open billing portal' });
+  }
+};
+
 // ─── Stripe Webhook ───────────────────────────────────────────────────────────
 
 /**

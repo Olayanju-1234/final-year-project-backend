@@ -9,6 +9,8 @@ import {
   requestRefund,
   getPaymentHistory,
   getActivityLog,
+  createSubscriptionCheckout,
+  createBillingPortalSession,
   handleStripeWebhook,
   handlePaystackWebhook,
 } from '@/controllers/paymentController';
@@ -82,3 +84,9 @@ paymentRoutes.get('/history', auth, getPaymentHistory);
 
 /** Activity/audit log for the authenticated user */
 paymentRoutes.get('/activity', auth, getActivityLog);
+
+/** Create Stripe Checkout Session for a subscription plan (Pro / Enterprise) */
+paymentRoutes.post('/subscription/checkout', auth, createSubscriptionCheckout);
+
+/** Create Stripe Billing Portal session for an existing subscriber */
+paymentRoutes.post('/billing-portal', auth, createBillingPortalSession);

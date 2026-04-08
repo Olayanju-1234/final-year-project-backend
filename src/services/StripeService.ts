@@ -97,6 +97,56 @@ export const StripeService = {
   },
 
   /**
+   * Create a Stripe Checkout Session for a subscription plan.
+   * Requires a pre-configured Stripe Price ID (set via env vars).
+   * Idempotency key scoped to landlordId + priceId — retrying is safe.
+   */
+  async createSubscriptionCheckout(params: {
+    landlordEmail: string;
+    landlordId: string;
+    priceId: string;
+    planName: string;
+    successUrl: string;
+    cancelUrl: string;
+  }): Promise<Stripe.Checkout.Session> {
+    return stripe.checkout.sessions.create(
+      {
+        payment_method_types: ['card'],
+        mode: 'subscription',
+        customer_email: params.landlordEmail,
+        line_items: [{ price: params.priceId, quantity: 1 }],
+        metadata: {
+          landlordId: params.landlordId,
+          plan: params.planName,
+          type: 'subscription',
+        },
+        subscription_data: {
+          metadata: { landlordId: params.landlordId, plan: params.planName },
+        },
+        success_url: params.successUrl,
+        cancel_url: params.cancelUrl,
+      },
+      {
+        idempotencyKey: `stripe_sub_${params.landlordId}_${params.priceId}`,
+      },
+    );
+  },
+
+  /**
+   * Create a Stripe Billing Portal session so a subscriber can
+   * manage, upgrade, cancel, or download invoices without any custom UI.
+   */
+  async createBillingPortalSession(params: {
+    customerId: string;
+    returnUrl: string;
+  }): Promise<Stripe.BillingPortal.Session> {
+    return stripe.billingPortal.sessions.create({
+      customer: params.customerId,
+      return_url: params.returnUrl,
+    });
+  },
+
+  /**
    * Construct and verify a Stripe webhook event.
    * Raw body (Buffer) required — not the JSON-parsed body.
    */

@@ -460,9 +460,9 @@ async function autoRefundDeposit(viewingId: string, trigger: string): Promise<vo
     await writeAuditLog({
       action: 'deposit.refund_requested',
       actorId: payment.landlordId.toString(),
-      actorRole: 'landlord',
-      resourceId: payment._id.toString(),
-      resourceType: 'ViewingPayment',
+      actorType: 'landlord',
+      targetId: payment._id.toString(),
+      targetType: 'ViewingPayment',
       metadata: { viewingId, trigger, auto: true },
     });
 
@@ -489,9 +489,9 @@ async function autoRefundDeposit(viewingId: string, trigger: string): Promise<vo
     await writeAuditLog({
       action: 'deposit.auto_refunded',
       actorId: payment.landlordId.toString(),
-      actorRole: 'landlord',
-      resourceId: payment._id.toString(),
-      resourceType: 'ViewingPayment',
+      actorType: 'landlord',
+      targetId: payment._id.toString(),
+      targetType: 'ViewingPayment',
       metadata: { viewingId, trigger, provider: payment.provider, auto: true },
     });
 

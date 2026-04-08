@@ -12,6 +12,7 @@ export type AuditAction =
   | 'viewing.created'
   | 'viewing.status_changed'
   | 'review.submitted'
+  | 'subscription.checkout_created'
   | 'auth.login'
   | 'auth.logout'
   | 'auth.register';
