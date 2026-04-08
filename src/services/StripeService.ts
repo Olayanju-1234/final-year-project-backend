@@ -8,20 +8,15 @@ const stripe = new Stripe(process.env.STRIPE_SECRET_KEY, {
   apiVersion: '2025-02-24.acacia',
 });
 
-/** Viewing deposit amount in GBP pence (£50.00 = 5000 pence) */
-const VIEWING_DEPOSIT_AMOUNT_PENCE = 5000;
+/** Viewing deposit: ₦5,000 represented in kobo for NGN, or £50 in GBP pence */
+const VIEWING_DEPOSIT_AMOUNT_PENCE = 5000; // £50 in GBP
 const VIEWING_DEPOSIT_CURRENCY = 'gbp';
 
 export const StripeService = {
   /**
    * Create a Stripe Checkout Session for a viewing deposit.
-   *
-   * The £50 deposit is held by the platform. If the viewing takes place,
-   * it is refunded to the tenant. If the tenant no-shows, the platform
-   * keeps the deposit to compensate the landlord.
-   *
-   * A PaymentIntent is created with `capture_method: 'automatic'` so funds
-   * are captured immediately and can be refunded programmatically later.
+   * Idempotency key scoped to the viewingId — retrying the same session
+   * creation returns the same session rather than creating a duplicate charge.
    */
   async createViewingDepositSession(params: {
     tenantEmail: string;
@@ -33,70 +28,79 @@ export const StripeService = {
     successUrl: string;
     cancelUrl: string;
   }): Promise<Stripe.Checkout.Session> {
-    return stripe.checkout.sessions.create({
-      payment_method_types: ['card'],
-      mode: 'payment',
-      customer_email: params.tenantEmail,
-      line_items: [
-        {
-          price_data: {
-            currency: VIEWING_DEPOSIT_CURRENCY,
-            unit_amount: VIEWING_DEPOSIT_AMOUNT_PENCE,
-            product_data: {
-              name: 'Viewing Deposit',
-              description: `Refundable deposit for viewing: ${params.propertyTitle}`,
+    return stripe.checkout.sessions.create(
+      {
+        payment_method_types: ['card'],
+        mode: 'payment',
+        customer_email: params.tenantEmail,
+        line_items: [
+          {
+            price_data: {
+              currency: VIEWING_DEPOSIT_CURRENCY,
+              unit_amount: VIEWING_DEPOSIT_AMOUNT_PENCE,
+              product_data: {
+                name: 'Viewing Deposit',
+                description: `Refundable deposit for viewing: ${params.propertyTitle}`,
+              },
             },
+            quantity: 1,
           },
-          quantity: 1,
-        },
-      ],
-      metadata: {
-        viewingId: params.viewingId,
-        propertyId: params.propertyId,
-        tenantId: params.tenantId,
-        landlordId: params.landlordId,
-        type: 'viewing_deposit',
-      },
-      payment_intent_data: {
+        ],
         metadata: {
           viewingId: params.viewingId,
           propertyId: params.propertyId,
           tenantId: params.tenantId,
           landlordId: params.landlordId,
+          type: 'viewing_deposit',
         },
-        // Funds captured immediately; we issue a refund programmatically
-        // when the viewing is confirmed as completed.
-        description: `Viewing deposit for ${params.propertyTitle}`,
+        payment_intent_data: {
+          metadata: {
+            viewingId: params.viewingId,
+            propertyId: params.propertyId,
+            tenantId: params.tenantId,
+            landlordId: params.landlordId,
+          },
+          description: `Viewing deposit for ${params.propertyTitle}`,
+        },
+        success_url: params.successUrl,
+        cancel_url: params.cancelUrl,
+        expires_at: Math.floor(Date.now() / 1000) + 30 * 60,
       },
-      success_url: params.successUrl,
-      cancel_url: params.cancelUrl,
-      expires_at: Math.floor(Date.now() / 1000) + 30 * 60, // 30 min
-    });
+      {
+        // Idempotency key: same viewingId always produces the same session
+        // Safe to retry on network errors without risk of double-charging
+        idempotencyKey: `stripe_session_deposit_${params.viewingId}`,
+      },
+    );
   },
 
   /**
    * Refund a viewing deposit back to the tenant.
-   * Called after the viewing is marked as completed.
+   * Idempotency key ensures multiple calls for the same viewing
+   * produce exactly one refund, never a duplicate.
    */
   async refundViewingDeposit(
     paymentIntentId: string,
     reason: 'viewing_completed' | 'landlord_cancelled' | 'dispute',
+    viewingId: string,
   ): Promise<Stripe.Refund> {
-    return stripe.refunds.create({
-      payment_intent: paymentIntentId,
-      reason: reason === 'dispute' ? 'fraudulent' : 'requested_by_customer',
-      metadata: { reason },
-    });
+    return stripe.refunds.create(
+      {
+        payment_intent: paymentIntentId,
+        reason: reason === 'dispute' ? 'fraudulent' : 'requested_by_customer',
+        metadata: { reason, viewingId },
+      },
+      {
+        idempotencyKey: `stripe_refund_${viewingId}`,
+      },
+    );
   },
 
   /**
    * Construct and verify a Stripe webhook event.
-   * The raw body (Buffer) must be passed — not the JSON-parsed body.
+   * Raw body (Buffer) required — not the JSON-parsed body.
    */
-  constructWebhookEvent(
-    rawBody: Buffer,
-    signature: string,
-  ): Stripe.Event {
+  constructWebhookEvent(rawBody: Buffer, signature: string): Stripe.Event {
     const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
     if (!webhookSecret) {
       throw new Error('STRIPE_WEBHOOK_SECRET is not configured');

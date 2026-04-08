@@ -1,16 +1,23 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import { auth } from '@/middleware/auth';
+import { rateLimiter } from '@/middleware/rateLimiter';
 import {
   createViewingDepositSession,
+  createPaystackDepositSession,
+  verifyPaystackPayment,
   getViewingDepositStatus,
+  requestRefund,
+  getPaymentHistory,
+  getActivityLog,
   handleStripeWebhook,
+  handlePaystackWebhook,
 } from '@/controllers/paymentController';
 
 export const paymentRoutes = Router();
 
 /**
- * Stripe webhook — must receive the raw body for signature verification.
- * Collect the raw body before Express parses it as JSON.
+ * Webhook routes — must receive the raw body for signature verification.
+ * Registered before any body-parser middleware in server.ts.
  */
 const rawBodyCollector = (
   req: Request,
@@ -18,7 +25,6 @@ const rawBodyCollector = (
   next: NextFunction,
 ): void => {
   const chunks: Buffer[] = [];
-
   req.on('data', (chunk: Buffer) => chunks.push(chunk));
   req.on('end', () => {
     (req as any).rawBody = Buffer.concat(chunks);
@@ -30,11 +36,30 @@ const rawBodyCollector = (
 /** Stripe webhook — no auth, raw body required */
 paymentRoutes.post('/webhook', rawBodyCollector, handleStripeWebhook);
 
-/** Create a viewing deposit Checkout Session */
+/** Paystack webhook — no auth, raw body required */
+paymentRoutes.post('/webhook/paystack', rawBodyCollector, handlePaystackWebhook);
+
+/** Create a Stripe viewing deposit Checkout Session */
 paymentRoutes.post(
   '/viewing/:viewingId/deposit',
   auth,
+  rateLimiter.payment,
   createViewingDepositSession,
+);
+
+/** Initialize a Paystack inline deposit */
+paymentRoutes.post(
+  '/viewing/:viewingId/deposit/paystack',
+  auth,
+  rateLimiter.payment,
+  createPaystackDepositSession,
+);
+
+/** Verify a Paystack payment after inline popup callback */
+paymentRoutes.post(
+  '/viewing/:viewingId/deposit/paystack/verify',
+  auth,
+  verifyPaystackPayment,
 );
 
 /** Get the deposit payment status for a viewing */
@@ -43,3 +68,17 @@ paymentRoutes.get(
   auth,
   getViewingDepositStatus,
 );
+
+/** Tenant-initiated refund request */
+paymentRoutes.post(
+  '/viewing/:viewingId/refund',
+  auth,
+  rateLimiter.payment,
+  requestRefund,
+);
+
+/** Payment history for the authenticated user */
+paymentRoutes.get('/history', auth, getPaymentHistory);
+
+/** Activity/audit log for the authenticated user */
+paymentRoutes.get('/activity', auth, getActivityLog);

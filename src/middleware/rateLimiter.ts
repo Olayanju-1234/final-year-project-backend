@@ -56,4 +56,11 @@ export const rateLimiter = {
     20, // property creations per hour
     "Too many property creation requests, please try again later.",
   ),
+
+  // Payment rate limiter — prevents deposit/refund spam
+  payment: createRateLimiter(
+    60 * 60 * 1000, // 1 hour
+    10, // 10 payment attempts per hour per IP
+    "Too many payment attempts, please try again later.",
+  ),
 }

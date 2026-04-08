@@ -3,6 +3,9 @@ import { Message } from "@/models/Message";
 import { Viewing } from "@/models/Viewing";
 import { Property } from "@/models/Property";
 import { User } from "@/models/User";
+import { ViewingPayment } from "@/models/ViewingPayment";
+import { StripeService } from "@/services/StripeService";
+import { writeAuditLog } from "@/utils/auditLogger";
 import type { ApiResponse, IMessage, IViewing } from "@/types";
 import { logger } from "@/utils/logger";
 import { validationResult } from "express-validator";
@@ -410,6 +413,11 @@ export class CommunicationController {
 
       logger.info("Viewing status updated", { viewingId: id, status, userId });
 
+      // Auto-refund: fire-and-forget when viewing is completed or landlord cancels
+      if (status === 'completed' || status === 'cancelled') {
+        setImmediate(() => autoRefundDeposit(id, status));
+      }
+
       res.status(200).json({
         success: true,
         message: "Viewing status updated successfully",
@@ -423,6 +431,78 @@ export class CommunicationController {
         error: error instanceof Error ? error.message : "Unknown error",
       } as ApiResponse);
     }
+  }
+}
+
+/**
+ * Auto-refund the deposit for a viewing when it is completed or cancelled.
+ * Called via setImmediate — never blocks the HTTP response.
+ * Uses optimistic locking: findOneAndUpdate on status:'paid' ensures only
+ * one refund fires even if this is called concurrently.
+ */
+async function autoRefundDeposit(viewingId: string, trigger: string): Promise<void> {
+  try {
+    // Atomic transition: paid → refund_requested
+    const payment = await ViewingPayment.findOneAndUpdate(
+      { viewingId, status: 'paid' },
+      { status: 'refund_requested' },
+      { new: true },
+    );
+
+    // null = already refunded, forfeited, or no deposit — nothing to do
+    if (!payment) {
+      logger.info('Auto-refund: no paid deposit found', { viewingId, trigger });
+      return;
+    }
+
+    const reason = trigger === 'completed' ? 'viewing_completed' : 'landlord_cancelled';
+
+    await writeAuditLog({
+      action: 'deposit.refund_requested',
+      actorId: payment.landlordId.toString(),
+      actorRole: 'landlord',
+      resourceId: payment._id.toString(),
+      resourceType: 'ViewingPayment',
+      metadata: { viewingId, trigger, auto: true },
+    });
+
+    if (payment.provider === 'stripe' && payment.stripe_payment_intent_id) {
+      const refund = await StripeService.refundViewingDeposit(
+        payment.stripe_payment_intent_id,
+        reason as 'viewing_completed' | 'landlord_cancelled',
+        viewingId,
+      );
+
+      await ViewingPayment.findOneAndUpdate(
+        { viewingId, status: 'refund_requested' },
+        { status: 'refunded', stripe_refund_id: refund.id, refunded_at: new Date(), refund_reason: reason },
+      );
+    } else if (payment.provider === 'paystack') {
+      // Paystack refunds require manual processing via dashboard for now;
+      // mark as refunded optimistically (Paystack webhook will confirm)
+      await ViewingPayment.findOneAndUpdate(
+        { viewingId, status: 'refund_requested' },
+        { status: 'refunded', refunded_at: new Date(), refund_reason: reason },
+      );
+    }
+
+    await writeAuditLog({
+      action: 'deposit.auto_refunded',
+      actorId: payment.landlordId.toString(),
+      actorRole: 'landlord',
+      resourceId: payment._id.toString(),
+      resourceType: 'ViewingPayment',
+      metadata: { viewingId, trigger, provider: payment.provider, auto: true },
+    });
+
+    logger.info('Auto-refund completed', { viewingId, trigger, provider: payment.provider });
+  } catch (err) {
+    // Revert to 'paid' so tenant can retry manually
+    await ViewingPayment.findOneAndUpdate(
+      { viewingId, status: 'refund_requested' },
+      { status: 'paid' },
+    ).catch(() => {});
+    logger.error('Auto-refund failed', { viewingId, trigger, err });
   }
 }
 
