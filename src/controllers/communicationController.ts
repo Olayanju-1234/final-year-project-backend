@@ -6,6 +6,7 @@ import { User } from "@/models/User";
 import { ViewingPayment } from "@/models/ViewingPayment";
 import { StripeService } from "@/services/StripeService";
 import { socketService } from "@/services/SocketService";
+import { emailService } from "@/services/EmailService";
 import { writeAuditLog } from "@/utils/auditLogger";
 import { retryWithBackoff } from "@/utils/retryWithBackoff";
 import type { ApiResponse, IMessage, IViewing } from "@/types";
@@ -86,6 +87,18 @@ export class CommunicationController {
         messageType,
         propertyId: propertyId ? String(propertyId) : undefined,
       });
+
+      // Email notification — fire-and-forget
+      const sender = await User.findById(fromUserId).select('name').lean();
+      setImmediate(() =>
+        emailService.sendMessageNotification({
+          recipientName: (recipient as any).name ?? 'there',
+          recipientEmail: (recipient as any).email,
+          senderName: (sender as any)?.name ?? 'A RentMatch user',
+          subject,
+          preview: message.length > 120 ? `${message.slice(0, 120)}…` : message,
+        }),
+      );
 
       res.status(201).json({
         success: true,
@@ -335,6 +348,29 @@ export class CommunicationController {
         landlordId: property.landlordId,
       });
 
+      // Email landlord about the new request — fire-and-forget
+      const [tenantUser, landlordUser] = await Promise.all([
+        User.findById(tenantId).select('name email').lean(),
+        User.findById(property.landlordId).select('name email').lean(),
+      ]);
+      const propAny = property as any;
+      const address = propAny.location
+        ? `${propAny.location.address ?? ''} ${propAny.location.city ?? ''}, ${propAny.location.state ?? ''}`.trim()
+        : 'Address not specified';
+      setImmediate(() =>
+        emailService.sendViewingRequest({
+          tenantName: (tenantUser as any)?.name ?? 'A tenant',
+          tenantEmail: (tenantUser as any)?.email ?? '',
+          landlordName: (landlordUser as any)?.name ?? 'Landlord',
+          landlordEmail: (landlordUser as any)?.email ?? '',
+          propertyTitle: property.title,
+          propertyAddress: address,
+          viewingDate: requestedDate,
+          viewingTime: requestedTime,
+          status: 'pending',
+        }),
+      );
+
       res.status(201).json({
         success: true,
         message: "Viewing request sent successfully",
@@ -437,6 +473,30 @@ export class CommunicationController {
       // Auto-refund: fire-and-forget when viewing is completed or landlord cancels
       if (status === 'completed' || status === 'cancelled') {
         setImmediate(() => autoRefundDeposit(id, status));
+      }
+
+      // Email tenant about status change — fire-and-forget
+      const viewingAny = viewing as any;
+      const tenantUser = viewingAny.tenantId;
+      const landlordUser = viewingAny.landlordId;
+      const propData = viewingAny.propertyId;
+      if (tenantUser?.email) {
+        const propAddress = propData?.location
+          ? `${propData.location.address ?? ''} ${propData.location.city ?? ''}, ${propData.location.state ?? ''}`.trim()
+          : 'Address not specified';
+        setImmediate(() =>
+          emailService.sendViewingStatusUpdate({
+            tenantName: tenantUser.name ?? 'Tenant',
+            tenantEmail: tenantUser.email,
+            landlordName: landlordUser?.name ?? 'Landlord',
+            landlordEmail: landlordUser?.email ?? '',
+            propertyTitle: propData?.title ?? 'Property',
+            propertyAddress: propAddress,
+            viewingDate: String(viewingAny.requestedDate ?? ''),
+            viewingTime: String(viewingAny.requestedTime ?? ''),
+            status,
+          }),
+        );
       }
 
       res.status(200).json({

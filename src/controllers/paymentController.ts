@@ -9,6 +9,7 @@ import { User } from '@/models/User';
 import { AuditLog } from '@/models/AuditLog';
 import { writeAuditLog } from '@/utils/auditLogger';
 import { retryWithBackoff } from '@/utils/retryWithBackoff';
+import { emailService } from '@/services/EmailService';
 import { logger } from '@/utils/logger';
 
 const APP_URL = process.env.APP_URL ?? 'http://localhost:3000';
@@ -798,6 +799,25 @@ async function handleViewingDepositPaid(session: Stripe.Checkout.Session): Promi
       targetType: 'Viewing',
       metadata: { provider: 'stripe', sessionId: session.id, paymentIntentId },
     });
+
+    // Email tenant deposit confirmation — fire-and-forget
+    const [tenantUser, viewingDoc] = await Promise.all([
+      User.findById(tenantId).select('name email').lean(),
+      Viewing.findById(viewingId).populate('propertyId', 'title').lean(),
+    ]);
+    const propertyTitle = (viewingDoc?.propertyId as any)?.title ?? 'your property';
+    if ((tenantUser as any)?.email) {
+      setImmediate(() =>
+        emailService.sendDepositNotification({
+          tenantName: (tenantUser as any).name ?? 'Tenant',
+          tenantEmail: (tenantUser as any).email,
+          propertyTitle,
+          amount: 50,
+          currency: 'gbp',
+          status: 'paid',
+        }),
+      );
+    }
   }
 
   logger.info(`Stripe deposit confirmed via webhook`, { viewingId, sessionId: session.id });
