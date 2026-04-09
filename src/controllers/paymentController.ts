@@ -5,6 +5,7 @@ import { StripeService } from '@/services/StripeService';
 import { PaystackService } from '@/services/PaystackService';
 import { ViewingPayment } from '@/models/ViewingPayment';
 import { Viewing } from '@/models/Viewing';
+import { User } from '@/models/User';
 import { AuditLog } from '@/models/AuditLog';
 import { writeAuditLog } from '@/utils/auditLogger';
 import { retryWithBackoff } from '@/utils/retryWithBackoff';
@@ -612,10 +613,14 @@ export const createBillingPortalSession = async (
   res: Response,
 ): Promise<void> => {
   try {
-    const { stripeCustomerId } = req.body as { stripeCustomerId: string };
+    const landlordId = (req as any).user.id;
+
+    // Read stripeCustomerId from the database — never trust the client to supply it
+    const landlord = await User.findById(landlordId).select('stripe_customer_id').lean();
+    const stripeCustomerId = (landlord as any)?.stripe_customer_id as string | undefined;
 
     if (!stripeCustomerId) {
-      res.status(400).json({ success: false, message: 'No active Stripe subscription found.' });
+      res.status(400).json({ success: false, message: 'No active Stripe subscription found. Please subscribe to a plan first.' });
       return;
     }
 
