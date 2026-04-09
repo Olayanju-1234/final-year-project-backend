@@ -80,13 +80,13 @@ class Server {
       this.app.use(morgan("combined"));
     }
 
-    // Stripe webhook must be registered before body parsers (needs raw body)
-    const apiVersion = process.env.API_VERSION || "v1";
-    this.app.use(`/api/${apiVersion}/payments`, paymentRoutes);
-
-    // Body parsing middleware
+    // Body parsing middleware — must come before routes
+    // Webhook routes collect raw body themselves via rawBodyCollector middleware
     this.app.use(express.json({ limit: "10mb" }));
     this.app.use(express.urlencoded({ extended: true, limit: "10mb" }));
+
+    const apiVersion = process.env.API_VERSION || "v1";
+    this.app.use(`/api/${apiVersion}/payments`, paymentRoutes);
 
     // General rate limiting
     this.app.use(rateLimiter.general);
@@ -106,7 +106,7 @@ class Server {
   private initializeRoutes(): void {
     const apiVersion = process.env.API_VERSION || "v1";
 
-    // API routes (payments registered early in initializeMiddleware for raw body access)
+    // API routes
     this.app.use(`/api/${apiVersion}/auth`, authRoutes);
     this.app.use(`/api/${apiVersion}/properties`, propertyRoutes);
     this.app.use(`/api/${apiVersion}/optimization`, optimizationRoutes);
