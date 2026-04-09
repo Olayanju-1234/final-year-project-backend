@@ -584,7 +584,7 @@ export const createSubscriptionCheckout = async (
     res.status(200).json({ success: true, data: { checkout_url: session.url } });
   } catch (err: any) {
     logger.error('Error creating subscription checkout', { error: err.message });
-    res.status(500).json({ success: false, message: 'Failed to create subscription checkout' });
+    res.status(500).json({ success: false, message: err.message || 'Failed to create subscription checkout' });
   }
 };
 

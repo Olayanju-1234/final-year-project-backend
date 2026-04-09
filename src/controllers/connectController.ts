@@ -45,7 +45,7 @@ export const startConnectOnboarding = async (req: Request, res: Response): Promi
     });
 
     await writeAuditLog({
-      action: 'auth.login', // closest available; use 'connect.onboarding_started' if you add it
+      action: 'connect.onboarding_started',
       actorId: landlordId,
       actorType: 'landlord',
       targetId: user!.stripe_account_id,
@@ -57,7 +57,11 @@ export const startConnectOnboarding = async (req: Request, res: Response): Promi
     res.status(200).json({ success: true, data: { onboarding_url: accountLink.url } });
   } catch (err: any) {
     logger.error('Error starting Connect onboarding', { error: err.message });
-    res.status(500).json({ success: false, message: 'Failed to start payout setup' });
+    // Surface the Stripe error so it's visible in the dashboard error toast
+    const hint = err.message?.includes('not enabled for Connect')
+      ? 'Stripe Connect is not enabled on this account. Enable it at dashboard.stripe.com → Settings → Connect.'
+      : err.message;
+    res.status(500).json({ success: false, message: hint || 'Failed to start payout setup' });
   }
 };
 

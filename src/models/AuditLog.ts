@@ -13,6 +13,7 @@ export type AuditAction =
   | 'viewing.status_changed'
   | 'review.submitted'
   | 'subscription.checkout_created'
+  | 'connect.onboarding_started'
   | 'auth.login'
   | 'auth.logout'
   | 'auth.register';
