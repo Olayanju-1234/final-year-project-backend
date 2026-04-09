@@ -1,5 +1,6 @@
 import type { Request, Response } from 'express';
 import Stripe from 'stripe';
+import { Types } from 'mongoose';
 import { StripeService } from '@/services/StripeService';
 import { PaystackService } from '@/services/PaystackService';
 import { ViewingPayment } from '@/models/ViewingPayment';
@@ -342,9 +343,20 @@ export const requestRefund = async (
     const { reason } = req.body;
 
     // Verify the viewing belongs to this tenant
-    const viewing = await Viewing.findOne({ _id: viewingId, tenantId }).lean();
+    // Cast both sides to ObjectId to avoid string vs ObjectId mismatch
+    let viewingObjId: Types.ObjectId;
+    let tenantObjId: Types.ObjectId;
+    try {
+      viewingObjId = new Types.ObjectId(viewingId);
+      tenantObjId = new Types.ObjectId(tenantId);
+    } catch {
+      res.status(400).json({ success: false, message: 'Invalid viewing or tenant ID' });
+      return;
+    }
+
+    const viewing = await Viewing.findOne({ _id: viewingObjId, tenantId: tenantObjId }).lean();
     if (!viewing) {
-      res.status(404).json({ success: false, message: 'Viewing not found' });
+      res.status(404).json({ success: false, message: 'Viewing not found or does not belong to you' });
       return;
     }
 
@@ -443,14 +455,14 @@ export const requestRefund = async (
       // Refund API call failed — revert optimistic lock back to 'paid'
       await ViewingPayment.findOneAndUpdate(
         { viewingId, status: 'refund_requested' },
-        { $set: { status: 'paid', refund_reason: undefined } },
+        { $set: { status: 'paid' }, $unset: { refund_reason: '' } },
       );
       logger.error('Refund API call failed, reverted to paid', { viewingId, error: refundErr.message });
-      res.status(502).json({ success: false, message: 'Refund failed, please try again' });
+      res.status(502).json({ success: false, message: `Refund failed: ${refundErr.message}` });
     }
   } catch (err: any) {
-    logger.error('Error processing refund', { error: err.message });
-    res.status(500).json({ success: false, message: 'Failed to process refund' });
+    logger.error('Error processing refund', { error: err.message, stack: err.stack });
+    res.status(500).json({ success: false, message: err.message || 'Failed to process refund' });
   }
 };
 
