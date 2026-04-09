@@ -9,6 +9,7 @@ import {
   getViewingDepositStatus,
   requestRefund,
   getPaymentHistory,
+  exportPaymentHistoryCsv,
   getActivityLog,
   createSubscriptionCheckout,
   createBillingPortalSession,
@@ -82,6 +83,9 @@ paymentRoutes.post(
 
 /** Payment history for the authenticated user */
 paymentRoutes.get('/history', auth, getPaymentHistory);
+
+/** Export payment history as CSV */
+paymentRoutes.get('/history/export', auth, exportPaymentHistoryCsv);
 
 /** Activity/audit log for the authenticated user */
 paymentRoutes.get('/activity', auth, getActivityLog);

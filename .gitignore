@@ -81,4 +81,4 @@ dist/
 *.tgz
 
 # Yarn Integrity file
-yarn.lock
+yarn.lock.github/

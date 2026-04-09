@@ -518,6 +518,69 @@ export const getPaymentHistory = async (
   }
 };
 
+// ─── CSV Export ───────────────────────────────────────────────────────────────
+
+/**
+ * GET /api/v1/payments/history/export
+ *
+ * Streams a CSV of the authenticated user's full payment history.
+ */
+export const exportPaymentHistoryCsv = async (
+  req: Request,
+  res: Response,
+): Promise<void> => {
+  try {
+    const tenantId = (req as any).user.id;
+
+    const payments = await ViewingPayment.find({ tenantId })
+      .populate<{ viewingId: any }>({
+        path: 'viewingId',
+        populate: { path: 'propertyId', select: 'title location' },
+      })
+      .sort({ createdAt: -1 })
+      .lean();
+
+    const rows: string[] = [
+      ['Date', 'Property', 'Location', 'Amount', 'Currency', 'Provider', 'Type', 'Status', 'Refund Reason'].join(','),
+    ];
+
+    for (const p of payments) {
+      const viewing = p.viewingId as any;
+      const property = viewing?.propertyId;
+      const location = property?.location
+        ? `${property.location.city ?? ''} ${property.location.state ?? ''}`.trim()
+        : '';
+      const type = ['refunded', 'refund_requested'].includes(p.status) ? 'refund' : 'deposit';
+      const date = (p.paid_at ?? p.createdAt).toISOString().split('T')[0];
+
+      // Escape CSV values that may contain commas
+      const escape = (v: string) => `"${String(v ?? '').replace(/"/g, '""')}"`;
+
+      rows.push([
+        date,
+        escape(property?.title ?? 'Unknown'),
+        escape(location),
+        p.amount,
+        p.currency.toUpperCase(),
+        p.provider,
+        type,
+        p.status,
+        escape(p.refund_reason ?? ''),
+      ].join(','));
+    }
+
+    const csv = rows.join('\n');
+    const filename = `rentmatch-payments-${new Date().toISOString().split('T')[0]}.csv`;
+
+    res.setHeader('Content-Type', 'text/csv');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.status(200).send(csv);
+  } catch (err: any) {
+    logger.error('Error exporting payment history CSV', { error: err.message });
+    res.status(500).json({ success: false, message: 'Failed to export payment history' });
+  }
+};
+
 // ─── Activity Log ─────────────────────────────────────────────────────────────
 
 /**
