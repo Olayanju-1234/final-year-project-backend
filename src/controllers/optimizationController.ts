@@ -1,6 +1,6 @@
 import type { Request, Response } from "express";
 import { linearProgrammingService } from "@/services/LinearProgrammingService";
-import { meridianService } from "@/services/MeridianService";
+import { rentMatchMeridianService } from "@/services/RentMatchMeridianService";
 import { Tenant } from "@/models/Tenant";
 import { Property } from "@/models/Property";
 import type {
@@ -395,7 +395,7 @@ export class OptimizationController {
       const { tenantId } = req.params;
       logger.info(`[Meridian] Request for tenant=${tenantId} user=${req.user?.id}`);
 
-      const result = await meridianService.run(tenantId);
+      const result = await rentMatchMeridianService.run(tenantId);
 
       res.status(200).json({
         success: true,

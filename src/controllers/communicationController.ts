@@ -3,12 +3,6 @@ import { Message } from "@/models/Message";
 import { Viewing } from "@/models/Viewing";
 import { Property } from "@/models/Property";
 import { User } from "@/models/User";
-import { ViewingPayment } from "@/models/ViewingPayment";
-import { StripeService } from "@/services/StripeService";
-import { socketService } from "@/services/SocketService";
-import { emailService } from "@/services/EmailService";
-import { writeAuditLog } from "@/utils/auditLogger";
-import { retryWithBackoff } from "@/utils/retryWithBackoff";
 import type { ApiResponse, IMessage, IViewing } from "@/types";
 import { logger } from "@/utils/logger";
 import { validationResult } from "express-validator";
@@ -78,27 +72,6 @@ export class CommunicationController {
         toUserId,
         messageType,
       });
-
-      // Real-time notification to recipient
-      socketService.emit(String(toUserId), 'message:new', {
-        messageId: String(newMessage._id),
-        fromUserId: String(fromUserId),
-        subject,
-        messageType,
-        propertyId: propertyId ? String(propertyId) : undefined,
-      });
-
-      // Email notification — fire-and-forget
-      const sender = await User.findById(fromUserId).select('name').lean();
-      setImmediate(() =>
-        emailService.sendMessageNotification({
-          recipientName: (recipient as any).name ?? 'there',
-          recipientEmail: (recipient as any).email,
-          senderName: (sender as any)?.name ?? 'A RentMatch user',
-          subject,
-          preview: message.length > 120 ? `${message.slice(0, 120)}…` : message,
-        }),
-      );
 
       res.status(201).json({
         success: true,
@@ -348,29 +321,6 @@ export class CommunicationController {
         landlordId: property.landlordId,
       });
 
-      // Email landlord about the new request — fire-and-forget
-      const [tenantUser, landlordUser] = await Promise.all([
-        User.findById(tenantId).select('name email').lean(),
-        User.findById(property.landlordId).select('name email').lean(),
-      ]);
-      const propAny = property as any;
-      const address = propAny.location
-        ? `${propAny.location.address ?? ''} ${propAny.location.city ?? ''}, ${propAny.location.state ?? ''}`.trim()
-        : 'Address not specified';
-      setImmediate(() =>
-        emailService.sendViewingRequest({
-          tenantName: (tenantUser as any)?.name ?? 'A tenant',
-          tenantEmail: (tenantUser as any)?.email ?? '',
-          landlordName: (landlordUser as any)?.name ?? 'Landlord',
-          landlordEmail: (landlordUser as any)?.email ?? '',
-          propertyTitle: property.title,
-          propertyAddress: address,
-          viewingDate: requestedDate,
-          viewingTime: requestedTime,
-          status: 'pending',
-        }),
-      );
-
       res.status(201).json({
         success: true,
         message: "Viewing request sent successfully",
@@ -460,45 +410,6 @@ export class CommunicationController {
 
       logger.info("Viewing status updated", { viewingId: id, status, userId });
 
-      // Real-time notification to tenant and landlord
-      const tenantId = String((viewing.tenantId as any)?._id ?? viewing.tenantId);
-      const landlordId = String((viewing.landlordId as any)?._id ?? viewing.landlordId);
-      const payload = {
-        viewingId: id,
-        status,
-        propertyTitle: (viewing.propertyId as any)?.title ?? '',
-      };
-      socketService.emitToMany([tenantId, landlordId], 'viewing:status_updated', payload);
-
-      // Auto-refund: fire-and-forget when viewing is completed or landlord cancels
-      if (status === 'completed' || status === 'cancelled') {
-        setImmediate(() => autoRefundDeposit(id, status));
-      }
-
-      // Email tenant about status change — fire-and-forget
-      const viewingAny = viewing as any;
-      const tenantUser = viewingAny.tenantId;
-      const landlordUser = viewingAny.landlordId;
-      const propData = viewingAny.propertyId;
-      if (tenantUser?.email) {
-        const propAddress = propData?.location
-          ? `${propData.location.address ?? ''} ${propData.location.city ?? ''}, ${propData.location.state ?? ''}`.trim()
-          : 'Address not specified';
-        setImmediate(() =>
-          emailService.sendViewingStatusUpdate({
-            tenantName: tenantUser.name ?? 'Tenant',
-            tenantEmail: tenantUser.email,
-            landlordName: landlordUser?.name ?? 'Landlord',
-            landlordEmail: landlordUser?.email ?? '',
-            propertyTitle: propData?.title ?? 'Property',
-            propertyAddress: propAddress,
-            viewingDate: String(viewingAny.requestedDate ?? ''),
-            viewingTime: String(viewingAny.requestedTime ?? ''),
-            status,
-          }),
-        );
-      }
-
       res.status(200).json({
         success: true,
         message: "Viewing status updated successfully",
@@ -512,81 +423,6 @@ export class CommunicationController {
         error: error instanceof Error ? error.message : "Unknown error",
       } as ApiResponse);
     }
-  }
-}
-
-/**
- * Auto-refund the deposit for a viewing when it is completed or cancelled.
- * Called via setImmediate — never blocks the HTTP response.
- * Uses optimistic locking: findOneAndUpdate on status:'paid' ensures only
- * one refund fires even if this is called concurrently.
- */
-async function autoRefundDeposit(viewingId: string, trigger: string): Promise<void> {
-  try {
-    // Atomic transition: paid → refund_requested
-    const payment = await ViewingPayment.findOneAndUpdate(
-      { viewingId, status: 'paid' },
-      { status: 'refund_requested' },
-      { new: true },
-    );
-
-    // null = already refunded, forfeited, or no deposit — nothing to do
-    if (!payment) {
-      logger.info('Auto-refund: no paid deposit found', { viewingId, trigger });
-      return;
-    }
-
-    const reason = trigger === 'completed' ? 'viewing_completed' : 'landlord_cancelled';
-
-    await writeAuditLog({
-      action: 'deposit.refund_requested',
-      actorId: payment.landlordId.toString(),
-      actorType: 'landlord',
-      targetId: payment._id.toString(),
-      targetType: 'ViewingPayment',
-      metadata: { viewingId, trigger, auto: true },
-    });
-
-    if (payment.provider === 'stripe' && payment.stripe_payment_intent_id) {
-      const refund = await retryWithBackoff(
-        () => StripeService.refundViewingDeposit(
-          payment.stripe_payment_intent_id!,
-          reason as 'viewing_completed' | 'landlord_cancelled',
-          viewingId,
-        ),
-        { maxAttempts: 4, baseDelayMs: 500, label: `auto_refund:${viewingId}` },
-      );
-
-      await ViewingPayment.findOneAndUpdate(
-        { viewingId, status: 'refund_requested' },
-        { status: 'refunded', stripe_refund_id: refund.id, refunded_at: new Date(), refund_reason: reason },
-      );
-    } else if (payment.provider === 'paystack') {
-      // Paystack refunds require manual processing via dashboard for now;
-      // mark as refunded optimistically (Paystack webhook will confirm)
-      await ViewingPayment.findOneAndUpdate(
-        { viewingId, status: 'refund_requested' },
-        { status: 'refunded', refunded_at: new Date(), refund_reason: reason },
-      );
-    }
-
-    await writeAuditLog({
-      action: 'deposit.auto_refunded',
-      actorId: payment.landlordId.toString(),
-      actorType: 'landlord',
-      targetId: payment._id.toString(),
-      targetType: 'ViewingPayment',
-      metadata: { viewingId, trigger, provider: payment.provider, auto: true },
-    });
-
-    logger.info('Auto-refund completed', { viewingId, trigger, provider: payment.provider });
-  } catch (err) {
-    // Revert to 'paid' so tenant can retry manually
-    await ViewingPayment.findOneAndUpdate(
-      { viewingId, status: 'refund_requested' },
-      { status: 'paid' },
-    ).catch(() => {});
-    logger.error('Auto-refund failed', { viewingId, trigger, err });
   }
 }
 

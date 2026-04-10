@@ -47,17 +47,24 @@ const userSchema = new Schema<IUser>(
       type: Boolean,
       default: true,
     },
-    // Stripe Connect — landlord payout account
-    stripe_account_id: { type: String, sparse: true },
-    stripe_onboarding_complete: { type: Boolean, default: false },
-    // Stripe Customer — for subscription billing portal
-    stripe_customer_id: { type: String, sparse: true },
+    stripe_customer_id: {
+      type: String,
+      default: null,
+    },
+    stripe_account_id: {
+      type: String,
+      default: null,
+    },
+    stripe_onboarding_complete: {
+      type: Boolean,
+      default: false,
+    },
   },
   {
     timestamps: true,
     toJSON: {
-      transform: (doc, ret) => {
-        delete (ret as any).password
+      transform: (doc: any, ret: any) => {
+        delete ret.password
         return ret
       },
     },
@@ -70,12 +77,11 @@ userSchema.index({ userType: 1 })
 
 // Hash password before saving
 userSchema.pre("save", async function (next) {
-  const doc = this as unknown as IUser;
-  if (!doc.isModified("password")) return next()
+  if (!this.isModified("password")) return next()
 
   try {
     const salt = await bcrypt.genSalt(12)
-    doc.password = await bcrypt.hash(doc.password, salt)
+    this.password = await bcrypt.hash(this.password, salt)
     next()
   } catch (error) {
     next(error as Error)

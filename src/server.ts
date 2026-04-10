@@ -1,6 +1,6 @@
 import "dotenv/config";
 import 'module-alias/register';
-import { createServer } from 'http';
+import 'tsconfig-paths/register';
 import express from "express";
 import cors from "cors";
 import helmet from "helmet";
@@ -9,7 +9,6 @@ import morgan from "morgan";
 import { database } from "@/config/database";
 import { logger } from "@/utils/logger";
 import { rateLimiter } from "@/middleware/rateLimiter";
-import { socketService } from "@/services/SocketService";
 
 // Import routes
 import { authRoutes } from "@/routes/auth";
@@ -17,10 +16,6 @@ import { propertyRoutes } from "@/routes/properties";
 import { optimizationRoutes } from "@/routes/optimization";
 import { tenantRoutes } from "@/routes/tenants";
 import { communicationRoutes } from "@/routes/communication";
-import { paymentRoutes } from "@/routes/payments";
-import { reviewRoutes } from "@/routes/reviews";
-import { waitlistRoutes } from "@/routes/waitlist";
-import { analyticsRoutes } from "@/routes/analytics";
 
 class Server {
   private app: express.Application;
@@ -35,11 +30,6 @@ class Server {
     this.initializeErrorHandling();
   }
 
-  /** Expose the Express app for http.createServer */
-  getApp(): express.Application {
-    return this.app;
-  }
-
   private initializeMiddleware(): void {
     // Security middleware
     this.app.use(helmet());
@@ -47,20 +37,15 @@ class Server {
     // CORS configuration
     this.app.use(
       cors({
-        origin: (origin, callback) => {
-          const allowed = [
-            "http://localhost:3000",
-            "http://localhost:3001",
-            process.env.APP_URL,
-          ].filter(Boolean);
-          // Allow requests with no origin (curl, Postman, server-to-server)
-          if (!origin) return callback(null, true);
-          // Allow any vercel.app preview deployment for this project
-          if (origin.includes("vercel.app") || allowed.includes(origin)) {
-            return callback(null, true);
-          }
-          callback(new Error(`CORS: origin ${origin} not allowed`));
-        },
+        origin:
+          process.env.NODE_ENV === "production"
+            ? ["https://final-year-project-frontend-sandy.vercel.app/"]
+            : [
+                "http://localhost:3000",
+                "http://localhost:3001",
+                "https://final-year-project-frontend-sandy.vercel.app/",
+                "http://localhost:3001/api/v1",
+              ],
         credentials: true,
         methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
         allowedHeaders: [
@@ -81,13 +66,9 @@ class Server {
       this.app.use(morgan("combined"));
     }
 
-    // Body parsing middleware — must come before routes
-    // Webhook routes collect raw body themselves via rawBodyCollector middleware
+    // Body parsing middleware
     this.app.use(express.json({ limit: "10mb" }));
     this.app.use(express.urlencoded({ extended: true, limit: "10mb" }));
-
-    const apiVersion = process.env.API_VERSION || "v1";
-    this.app.use(`/api/${apiVersion}/payments`, paymentRoutes);
 
     // General rate limiting
     this.app.use(rateLimiter.general);
@@ -113,9 +94,6 @@ class Server {
     this.app.use(`/api/${apiVersion}/optimization`, optimizationRoutes);
     this.app.use(`/api/${apiVersion}/tenants`, tenantRoutes);
     this.app.use(`/api/${apiVersion}/communication`, communicationRoutes);
-    this.app.use(`/api/${apiVersion}/reviews`, reviewRoutes);
-    this.app.use(`/api/${apiVersion}/waitlist`, waitlistRoutes);
-    this.app.use(`/api/${apiVersion}/analytics`, analyticsRoutes);
 
     // 404 handler for undefined routes
     this.app.use("*", (req, res) => {
@@ -196,19 +174,8 @@ class Server {
       // Connect to database
       await database.connect();
 
-      // Wrap express in an http.Server so Socket.io can share the port
-      const httpServer = createServer(this.app);
-
-      const corsOrigins = [
-        'http://localhost:3000',
-        'http://localhost:3001',
-        process.env.APP_URL,
-      ].filter(Boolean) as string[];
-
-      socketService.init(httpServer, corsOrigins);
-
       // Start server
-      httpServer.listen(this.port, () => {
+      this.app.listen(this.port, () => {
         logger.info(`🚀 RentMatch API Server started successfully`);
         logger.info(`📍 Server running on port ${this.port}`);
         logger.info(`🌍 Environment: ${process.env.NODE_ENV}`);

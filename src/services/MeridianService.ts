@@ -1,33 +1,34 @@
-import { linearProgrammingService } from "./LinearProgrammingService"
-import { Tenant } from "@/models/Tenant"
-import { Property } from "@/models/Property"
 import { logger } from "@/utils/logger"
-import type { PropertyMatch, OptimizationConstraints } from "@/types"
-
-export interface MeridianResult {
-  assignedProperty: PropertyMatch | null
-  alternatives: PropertyMatch[]
-  marketStats: {
-    cohortSize: number
-    propertiesEvaluated: number
-    globalObjectiveValue: number
-    yourObjectiveValue: number
-    executionTime: number
-    algorithm: "meridian"
-  }
-}
 
 /**
- * Meridian — RentMatch's market-clearing matching engine.
+ * Meridian — a domain-agnostic market-clearing matching engine.
  *
- * Unlike per-tenant LP matching (greedy, locally optimal), Meridian solves
- * the entire active cohort as a bipartite assignment problem using the
- * Hungarian algorithm. This finds the globally optimal assignment that
- * maximises total compatibility across all tenants in the same market segment.
+ * Uses the Hungarian algorithm (Jonker-Volgenant O(n³)) to find the globally
+ * optimal bipartite assignment between any two sets of items. The caller
+ * supplies the score function — Meridian handles the optimisation.
  *
- * Named after the meridian — the highest point — reflecting that the engine
- * finds the global optimum rather than any local maximum.
+ * Usage in RentMatch (via RentMatchMeridianService):
+ *   meridianService.run(tenants, properties, (t, p) => lpScore(t, p))
+ *
+ * The same engine can be applied to any other assignment problem:
+ *   meridianService.run(riders, orders, proximityScore)
+ *   meridianService.run(students, schools, admissionScore)
  */
+
+export interface MeridianAssignment<A, R> {
+  agent: A
+  resource: R | null   // null if no compatible resource in cohort
+  score: number
+}
+
+export interface MeridianResult<A, R> {
+  assignments: MeridianAssignment<A, R>[]
+  globalObjectiveValue: number   // avg score across assigned pairs (0–1)
+  executionTimeMs: number
+  agentCount: number
+  resourceCount: number
+}
+
 export class MeridianService {
   private static instance: MeridianService
 
@@ -38,148 +39,79 @@ export class MeridianService {
     return MeridianService.instance
   }
 
-  public async run(tenantId: string): Promise<MeridianResult> {
+  /**
+   * Run Meridian over two sets and a scoring function.
+   *
+   * @param agents    — e.g. tenants, riders, students
+   * @param resources — e.g. properties, orders, schools
+   * @param scoreFn   — returns 0–100 compatibility for (agent, resource)
+   * @returns globally optimal one-to-one assignment for each agent
+   */
+  public async run<A, R>(
+    agents: A[],
+    resources: R[],
+    scoreFn: (agent: A, resource: R) => number
+  ): Promise<MeridianResult<A, R>> {
     const startTime = Date.now()
+    const n = agents.length
+    const m = resources.length
 
-    const requestingTenant = await Tenant.findById(tenantId).populate("userId", "name").lean()
-    if (!requestingTenant) throw new Error("Tenant not found")
-
-    const prefs = requestingTenant.preferences
-
-    // Cohort: tenants whose budget range overlaps AND preferred location matches
-    const cohortTenants: any[] = await Tenant.find({
-      $and: [
-        { "preferences.budget.max": { $gte: prefs.budget.min } },
-        { "preferences.budget.min": { $lte: prefs.budget.max } },
-        { "preferences.preferredLocation": new RegExp(prefs.preferredLocation, "i") },
-      ],
-    })
-      .populate("userId", "name")
-      .lean()
-
-    // Ensure requesting tenant is always in cohort
-    const inCohort = cohortTenants.some((t) => t._id.toString() === tenantId)
-    if (!inCohort) cohortTenants.push(requestingTenant as any)
-
-    logger.info(`[Meridian] tenant=${tenantId} cohort=${cohortTenants.length}`)
-
-    // Properties: available, matching city, budget within ±30%
-    const cityPattern = new RegExp(prefs.preferredLocation, "i")
-    const properties: any[] = await Property.find({
-      status: "available",
-      $or: [{ "location.city": cityPattern }, { "location.address": cityPattern }],
-      rent: { $gte: prefs.budget.min * 0.7, $lte: prefs.budget.max * 1.3 },
-    })
-      .limit(200)
-      .lean()
-
-    logger.info(`[Meridian] properties in market=${properties.length}`)
-
-    if (properties.length === 0 || cohortTenants.length === 0) {
-      return this.emptyResult(startTime)
+    if (n === 0 || m === 0) {
+      return {
+        assignments: agents.map((a) => ({ agent: a, resource: null, score: 0 })),
+        globalObjectiveValue: 0,
+        executionTimeMs: Date.now() - startTime,
+        agentCount: n,
+        resourceCount: m,
+      }
     }
 
-    const weights = linearProgrammingService.getDefaultWeights()
-    const n = cohortTenants.length
-    const m = properties.length
-
     // Build score matrix [n × m]
-    const scoreMatrix: number[][] = cohortTenants.map((tenant) => {
-      const constraints = this.tenantToConstraints(tenant)
-      return properties.map((property) =>
-        linearProgrammingService.scoreProperty(property, constraints, weights)
-      )
-    })
+    const scoreMatrix: number[][] = agents.map((agent) =>
+      resources.map((resource) => scoreFn(agent, resource))
+    )
 
-    // Hungarian algorithm (maximisation via inversion)
+    // Solve via Hungarian algorithm (maximisation → minimisation via inversion)
     const size = Math.max(n, m)
     const assignment = this.hungarian(scoreMatrix, n, m, size)
 
-    // Extract this tenant's assignment
-    const requestingIdx = cohortTenants.findIndex((t) => t._id.toString() === tenantId)
-    const assignedPropertyIdx = requestingIdx !== -1 ? assignment[requestingIdx] : -1
-    const assignedPropertyRaw =
-      assignedPropertyIdx >= 0 && assignedPropertyIdx < m ? properties[assignedPropertyIdx] : null
-
-    const requestingConstraints = this.tenantToConstraints(requestingTenant as any)
-    let assignedMatch: PropertyMatch | null = null
-
-    if (assignedPropertyRaw) {
-      const score = linearProgrammingService.scoreProperty(
-        assignedPropertyRaw,
-        requestingConstraints,
-        weights
-      )
-      assignedMatch = {
-        propertyId: assignedPropertyRaw._id,
-        tenantId: tenantId as any,
-        matchScore: Math.round(score),
-        matchDetails: linearProgrammingService.getMatchDetails(
-          assignedPropertyRaw,
-          requestingConstraints,
-          weights
-        ),
-        explanation: linearProgrammingService.explainMatch(
-          assignedPropertyRaw,
-          requestingConstraints,
-          score
-        ),
-        calculatedAt: new Date(),
-      }
-    }
-
-    // LP alternatives for this tenant (top-5 excluding assigned)
-    const tenantScores = properties
-      .map((p, i) => ({ property: p, score: scoreMatrix[requestingIdx]?.[i] ?? 0, idx: i }))
-      .filter((x) => x.score >= 30 && x.idx !== assignedPropertyIdx)
-      .sort((a, b) => b.score - a.score)
-      .slice(0, 5)
-
-    const alternatives: PropertyMatch[] = tenantScores.map(({ property, score }) => ({
-      propertyId: property._id,
-      tenantId: tenantId as any,
-      matchScore: Math.round(score),
-      matchDetails: linearProgrammingService.getMatchDetails(property, requestingConstraints, weights),
-      explanation: linearProgrammingService.explainMatch(property, requestingConstraints, score),
-      calculatedAt: new Date(),
-    }))
-
-    // Global objective value (avg compatibility across all assignments)
-    let globalSum = 0
-    let assignedCount = 0
-    for (let i = 0; i < n; i++) {
+    // Map results
+    const assignments: MeridianAssignment<A, R>[] = agents.map((agent, i) => {
       const j = assignment[i]
       if (j >= 0 && j < m) {
-        globalSum += scoreMatrix[i][j]
-        assignedCount++
+        return { agent, resource: resources[j], score: scoreMatrix[i][j] }
       }
-    }
-    const globalObjectiveValue = assignedCount > 0 ? globalSum / (assignedCount * 100) : 0
-    const yourObjectiveValue = assignedMatch ? assignedMatch.matchScore / 100 : 0
+      return { agent, resource: null, score: 0 }
+    })
 
+    // Global objective: avg score across assigned pairs (0–1 scale)
+    const assigned = assignments.filter((a) => a.resource !== null)
+    const globalObjectiveValue = assigned.length > 0
+      ? assigned.reduce((s, a) => s + a.score, 0) / (assigned.length * 100)
+      : 0
+
+    const execMs = Date.now() - startTime
     logger.info(
-      `[Meridian] done in ${Date.now() - startTime}ms global=${globalObjectiveValue.toFixed(2)} tenant=${yourObjectiveValue.toFixed(2)}`
+      `[Meridian] n=${n} m=${m} assigned=${assigned.length} global=${globalObjectiveValue.toFixed(2)} time=${execMs}ms`
     )
 
     return {
-      assignedProperty: assignedMatch,
-      alternatives,
-      marketStats: {
-        cohortSize: cohortTenants.length,
-        propertiesEvaluated: properties.length,
-        globalObjectiveValue: Math.round(globalObjectiveValue * 100) / 100,
-        yourObjectiveValue: Math.round(yourObjectiveValue * 100) / 100,
-        executionTime: Date.now() - startTime,
-        algorithm: "meridian",
-      },
+      assignments,
+      globalObjectiveValue: Math.round(globalObjectiveValue * 100) / 100,
+      executionTimeMs: execMs,
+      agentCount: n,
+      resourceCount: m,
     }
   }
 
   /**
-   * Hungarian algorithm — O(n³) implementation using Jonker-Volgenant potentials.
-   * Converts maximisation to minimisation by inverting scores (cost = 100 - score).
+   * Hungarian algorithm — Jonker-Volgenant potential method.
+   * Time complexity: O(n³). Safe up to ~500×500 matrices in <100ms.
+   *
+   * Converts maximisation to minimisation: cost(i,j) = 100 - score(i,j)
+   * Padding rows/cols use cost=100 to handle non-square matrices gracefully.
    */
-  private hungarian(
+  public hungarian(
     scoreMatrix: number[][],
     n: number,
     m: number,
@@ -187,15 +119,12 @@ export class MeridianService {
   ): number[] {
     const INF = 1e9
 
-    // cost[i][j] = 100 - scoreMatrix[i][j]; padding rows/cols use cost=100 (neutral)
-    const cost = (i: number, j: number): number => {
-      if (i < n && j < m) return 100 - scoreMatrix[i][j]
-      return 100
-    }
+    const cost = (i: number, j: number): number =>
+      i < n && j < m ? 100 - scoreMatrix[i][j] : 100
 
-    const u = new Array(size + 1).fill(0)   // row potentials
-    const v = new Array(size + 1).fill(0)   // col potentials
-    const p = new Array(size + 1).fill(0)   // p[j] = row assigned to col j (1-indexed)
+    const u = new Array(size + 1).fill(0)
+    const v = new Array(size + 1).fill(0)
+    const p = new Array(size + 1).fill(0)
     const way = new Array(size + 1).fill(0)
 
     for (let i = 1; i <= size; i++) {
@@ -242,44 +171,11 @@ export class MeridianService {
       } while (j0)
     }
 
-    // assignment[i] = j means row i (tenant) → col j (property), both 0-indexed
     const assignment = new Array(size).fill(-1)
     for (let j = 1; j <= size; j++) {
-      if (p[j] !== 0) {
-        assignment[p[j] - 1] = j - 1
-      }
+      if (p[j] !== 0) assignment[p[j] - 1] = j - 1
     }
-
     return assignment
-  }
-
-  private tenantToConstraints(tenant: any): OptimizationConstraints {
-    const prefs = tenant.preferences
-    return {
-      tenantId: tenant._id.toString(),
-      budget: prefs.budget,
-      location: prefs.preferredLocation,
-      amenities: prefs.requiredAmenities || [],
-      bedrooms: prefs.preferredBedrooms,
-      bathrooms: prefs.preferredBathrooms,
-      features: prefs.features,
-      utilities: prefs.utilities,
-    }
-  }
-
-  private emptyResult(startTime: number): MeridianResult {
-    return {
-      assignedProperty: null,
-      alternatives: [],
-      marketStats: {
-        cohortSize: 0,
-        propertiesEvaluated: 0,
-        globalObjectiveValue: 0,
-        yourObjectiveValue: 0,
-        executionTime: Date.now() - startTime,
-        algorithm: "meridian",
-      },
-    }
   }
 }
 
