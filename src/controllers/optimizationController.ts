@@ -1,5 +1,6 @@
 import type { Request, Response } from "express";
 import { linearProgrammingService } from "@/services/LinearProgrammingService";
+import { meridianService } from "@/services/MeridianService";
 import { Tenant } from "@/models/Tenant";
 import { Property } from "@/models/Property";
 import type {
@@ -370,6 +371,42 @@ export class OptimizationController {
       res.status(500).json({
         success: false,
         message: "Optimization test failed",
+        error: error instanceof Error ? error.message : "Unknown error",
+      } as ApiResponse);
+    }
+  }
+
+  /**
+   * Run Meridian market-clearing matching for a tenant
+   * GET /api/optimization/meridian/:tenantId
+   */
+  public async getMeridianMatches(req: Request, res: Response): Promise<void> {
+    try {
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) {
+        res.status(400).json({
+          success: false,
+          message: "Validation failed",
+          error: errors.array().map((e) => e.msg).join(", "),
+        } as ApiResponse);
+        return;
+      }
+
+      const { tenantId } = req.params;
+      logger.info(`[Meridian] Request for tenant=${tenantId} user=${req.user?.id}`);
+
+      const result = await meridianService.run(tenantId);
+
+      res.status(200).json({
+        success: true,
+        message: "Meridian matching completed",
+        data: result,
+      } as ApiResponse);
+    } catch (error) {
+      logger.error("Meridian matching failed", error);
+      res.status(500).json({
+        success: false,
+        message: "Meridian matching failed",
         error: error instanceof Error ? error.message : "Unknown error",
       } as ApiResponse);
     }

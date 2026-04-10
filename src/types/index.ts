@@ -25,11 +25,6 @@ export interface IUser extends Document {
   userType: "tenant" | "landlord" | "admin";
   isVerified: boolean;
   isActive: boolean;
-  // Stripe Connect — landlord payout account
-  stripe_account_id?: string;
-  stripe_onboarding_complete?: boolean;
-  // Stripe Customer — for subscription billing portal
-  stripe_customer_id?: string;
   createdAt: Date;
   updatedAt: Date;
   comparePassword(candidatePassword: string): Promise<boolean>;
@@ -162,7 +157,7 @@ export interface PropertyMatch {
 export interface OptimizationResult {
   matches: PropertyMatch[];
   optimizationDetails: {
-    algorithm: "linear_programming" | "greedy_matching";
+    algorithm: "linear_programming" | "greedy_matching" | "meridian";
     executionTime: number;
     constraintsSatisfied: string[];
     objectiveValue: number;

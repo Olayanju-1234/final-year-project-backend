@@ -30,7 +30,7 @@ export class LinearProgrammingService {
   private static instance: LinearProgrammingService;
 
   // Default optimization weights
-  private readonly defaultWeights: OptimizationWeights = {
+  public readonly defaultWeights: OptimizationWeights = {
     budget: Number.parseFloat(process.env.LP_DEFAULT_WEIGHTS_BUDGET || "0.25"),
     location: Number.parseFloat(
       process.env.LP_DEFAULT_WEIGHTS_LOCATION || "0.2"
@@ -243,6 +243,42 @@ export class LinearProgrammingService {
     );
 
     return await Property.find(query).limit(maxProperties).lean().exec();
+  }
+
+  /** Public accessors for Meridian */
+  public getDefaultWeights(): OptimizationWeights {
+    return { ...this.defaultWeights }
+  }
+
+  public scoreProperty(
+    property: any,
+    constraints: OptimizationConstraints,
+    weights: OptimizationWeights
+  ): number {
+    return this.calculateSatisfactionScore(property, constraints, weights)
+  }
+
+  public getMatchDetails(
+    property: any,
+    constraints: OptimizationConstraints,
+    weights: OptimizationWeights
+  ): { budgetScore: number; locationScore: number; amenityScore: number; sizeScore: number; featureScore: number; utilityScore: number } {
+    return {
+      budgetScore: Math.round(this.calculateBudgetScore(property.rent, constraints.budget)),
+      locationScore: Math.round(this.calculateLocationScore(property.location, constraints.location)),
+      amenityScore: Math.round(this.calculateAmenityScore(property.amenities, constraints.amenities)),
+      sizeScore: Math.round(this.calculateSizeScore(property, constraints)),
+      featureScore: Math.round(this.calculateFeatureScore(property.features, constraints.features)),
+      utilityScore: Math.round(this.calculateUtilityScore(property.utilities, constraints.utilities)),
+    }
+  }
+
+  public explainMatch(
+    property: any,
+    constraints: OptimizationConstraints,
+    score: number
+  ): string[] {
+    return this.generateMatchExplanation(property, constraints, score)
   }
 
   /**

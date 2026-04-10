@@ -91,6 +91,18 @@ router.get(
 router.get("/stats", auth, optimizationController.getOptimizationStats)
 
 /**
+ * @route   GET /api/optimization/meridian/:tenantId
+ * @desc    Run Meridian market-clearing matching for a tenant
+ * @access  Private
+ */
+router.get(
+  "/meridian/:tenantId",
+  auth,
+  param("tenantId").isMongoId().withMessage("Invalid tenant ID"),
+  optimizationController.getMeridianMatches,
+)
+
+/**
  * @route   POST /api/optimization/test
  * @desc    Test optimization algorithm performance
  * @access  Private (Admin only)
