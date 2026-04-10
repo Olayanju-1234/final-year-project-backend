@@ -39,12 +39,11 @@ class Server {
       cors({
         origin:
           process.env.NODE_ENV === "production"
-            ? ["https://final-year-project-frontend-sandy.vercel.app/"]
+            ? ["https://final-year-project-frontend-sandy.vercel.app"]
             : [
                 "http://localhost:3000",
                 "http://localhost:3001",
-                "https://final-year-project-frontend-sandy.vercel.app/",
-                "http://localhost:3001/api/v1",
+                "https://final-year-project-frontend-sandy.vercel.app",
               ],
         credentials: true,
         methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
