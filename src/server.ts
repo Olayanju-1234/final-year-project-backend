@@ -20,6 +20,7 @@ import { paymentRoutes } from "@/routes/payments";
 import { analyticsRoutes } from "@/routes/analytics";
 import { reviewRoutes } from "@/routes/reviews";
 import { waitlistRoutes } from "@/routes/waitlist";
+import { insightsRoutes } from "@/routes/insights";
 
 class Server {
   private app: express.Application;
@@ -101,6 +102,7 @@ class Server {
     this.app.use(`/api/${apiVersion}/analytics`, analyticsRoutes);
     this.app.use(`/api/${apiVersion}/reviews`, reviewRoutes);
     this.app.use(`/api/${apiVersion}/waitlist`, waitlistRoutes);
+    this.app.use(`/api/${apiVersion}/insights`, insightsRoutes);
 
     // 404 handler for undefined routes
     this.app.use("*", (req, res) => {
